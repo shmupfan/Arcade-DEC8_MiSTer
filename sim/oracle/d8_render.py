@@ -241,8 +241,9 @@ def srdarwin_sprites(pen, pri, buf, elems, vis, flip):
 
 
 # ---------------------------------------------------------------- frame
-def render(frame_dir, regions_set=None):
-    """Return (rgb [240, 256, 3] of the visible area, stats dict)."""
+def render(frame_dir, regions_set=None, pens=False):
+    """Return (rgb [240, 256, 3] of the visible area, stats dict), plus the
+    palette index of every pixel [240, 256] when pens=True (M1 replay)."""
     d = Path(frame_dir)
     st = json.loads((d / "state.json").read_text())
     setname = regions_set or st["set"]
@@ -339,6 +340,8 @@ def render(frame_dir, regions_set=None):
     if pw.exists():
         stats["unwritten_px"] = int((~written[pidx]).sum())
     rgb = pal[pidx].astype(np.uint8)
+    if pens:
+        return rgb, stats, pidx
     return rgb, stats
 
 

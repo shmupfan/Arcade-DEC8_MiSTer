@@ -54,7 +54,7 @@ srdarwin) are the accuracy references.
 | M | Content | Gate |
 |---|---|---|
 | M0 | spec, ROM checks, region builder, MAME oracle, reference renderer | 10/10 sets, regions byte-identical, renderer pixel-exact on every captured frame (DONE, docs/m0_findings.md) |
-| M1 | video RTL for the three machines | RTL pixel-exact against MAME on every M0 frame; mid-scan writes rendered live and every differing frame classified; synthetic scenes against the renderer; line budget with a pessimistic ROM model |
+| M1 | video RTL for the three machines | RTL pixel-exact against MAME on every M0 frame; mid-scan writes rendered live and every differing frame classified; synthetic scenes against the renderer; line budget with a pessimistic ROM model (DONE, docs/m1_findings.md) |
 | M2 | full system: 6809 x2 / 6309-as-6809 / 6809, i8751, memory maps, interrupts, MCU protocol, inputs, DIPs | boots from power-on match MAME's I/O streams, images and RAM; divergences root-caused |
 | M3 | sound: 6502/R65C02/DECO 222, YM2203, YM3526/YM3812, latches and NMIs | register streams and level against MAME WAVs |
 | M4 | MiSTer shell, SDRAM, MRAs (DIPs from the driver, machine byte, srdarwinb sprite byte swap done by the MRA interleave), rotary input for Gondomania, Quartus timing at 96 MHz | board sim equals M2; timing closed; first RBF on hardware |
@@ -74,6 +74,23 @@ shell edge case to test (1945k III known issue 9.1).
   (race the beam). MAME draws each frame once at vblank, so frames with
   visible-area tile, palette or scroll writes will differ from MAME; M1
   classifies each one. Most plausible PCB behaviour, unconfirmed (R5).
+- 5.3 MCU dumps (Lee, 2026-10-03): the good-dump clones are the accuracy
+  references: lastmisnu5/lastmisnu6 for Last Mission, gondou (and
+  makyosen) for Gondomania, srdarwin for SRD. The parent sets lastmisn and
+  gondo and the clones lastmisnj and srdarwinj carry BAD_DUMP MCU programs
+  in MAME (lastmisn "not verified to be the same data as the A MCU dump",
+  gondo "hand-crafted from the US version", lastmisnj and srdarwinj marked
+  BAD_DUMP); they are still supported and compared against MAME, but a
+  difference that traces to their MCU program is not a core bug (R1).
+- 5.4 Karnov sprite flip (Lee, 2026-10-03): MAME's behaviour is the default
+  (the Karnov sprites of lastmisn/gondo are not flipped when the screen
+  flips, because dec8.cpp never sets the sprite chip's flip flag), behind a
+  one-bit parameter so the other behaviour costs nothing to switch to. A
+  separate research task is looking for real PCB 1CC footage on YouTube to
+  validate it (R7).
+- 5.5 Gondomania rotary joystick (Lee, 2026-10-03): support both a
+  spinner/paddle input and a button mapping (rotate left/right) for the
+  12-position rotary; M4 shell work.
 
 ## 6. Research items
 
@@ -85,8 +102,9 @@ shell edge case to test (1945k III known issue 9.1).
 | R4 | Does Gondomania ever enter 6309 native mode or use 6309-only opcodes in gameplay? | gameplay trace in M2 (attract: none in 36.1 M instructions) |
 | R5 | Live rendering of mid-scan tile/palette/scroll writes vs MAME's frame-at-once | frame-by-frame PCB footage of a frame with a mid-scan text or scroll write |
 | R6 | srdarwin double-height sprites at the top are clipped in MAME (TODO): do they wrap on hardware? | PCB footage of a sprite entering from the top |
-| R7 | The Karnov sprite chip's flip flag is never set in dec8.cpp, so MAME draws lastmisn/gondo sprites unflipped when the screen is flipped; the M0 flip run matches MAME this way. Does the hardware flip them, or does the program compensate? | PCB footage in flip mode; the program's sprite coordinates in flipped frames |
+| R7 | The Karnov sprite chip's flip flag is never set in dec8.cpp, so MAME draws lastmisn/gondo sprites unflipped when the screen is flipped; the M0 flip run matches MAME this way. Does the hardware flip them, or does the program compensate? | PCB footage in flip mode (a research task is searching YouTube for real PCB 1CC footage, decision 5.4); the program's sprite coordinates in flipped frames |
 | R8 | gondo NMI-enable latency ("1 more opcode") and MCU INT1 auto-clear (4 vs 64 ticks, not confirmed) | schematics, M2 interrupt timing against MAME |
 | R9 | srdarwin MCU clock ("unknown frequency") and main CPU type ("MC68A09EP or HD63?09EP") | PCB photos |
 | R10 | srdarwin fix layer colour fixed at 0 ("?") | PCB footage of the text layer colours |
 | R11 | mc6809i licence | the original repository's licence file |
+| R12 | Does the PCB limit sprites per line? The core draws the whole list (256 Karnov, 128 srdarwin) on one line (m1_findings 4) | PCB footage of a crowded line; schematics |

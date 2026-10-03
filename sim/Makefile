@@ -12,6 +12,24 @@
 #   make analyze         write-log, interrupt and sprite summaries
 #   make m0              everything above, in order
 #
+# M1 targets (Verilator; need `make regions` and the oracle captures):
+#   make m1-gfx          graphics ROM image per set (build/regions/<set>/gfx.bin,
+#                        tools/gfx_layout.py) with the decode self-check
+#   make m1-build        build the d8_video frame-replay harness: LIVE (the
+#                        default), LATCH and KRN_FLIP=1 builds
+#   make m1-verify       RTL vs MAME on every M0 capture frame, all 10 sets (gate)
+#   make m1-verify-latch the same with the LATCH build
+#   make m1-synth        synthetic scenes vs d8_render.py (gate)
+#   make m1-krnflip      KRN_FLIP=1 build on the synthetic scenes vs the model
+#                        with the chip flip on (R7 switch, not MAME parity)
+#   make m1-vislog       rerun every capture with VISLOG=1 (visible-scan writes
+#                        with the value before each write)
+#   make m1-midscan      replay every captured frame with visible-scan writes
+#                        through LIVE and LATCH and classify each difference (gate)
+#   make m1-capacity     sprites-per-line probe (not a gate)
+#   make m1              m1-gfx m1-build m1-verify m1-verify-latch m1-synth
+#                        m1-krnflip m1-midscan
+#
 # Every MAME run starts from a wiped cfg/nvram directory (mame/run_mame.sh),
 # so captures are reproducible from power-on. Output lands in mame/out
 # (gitignored).
@@ -40,7 +58,8 @@ CLONES       := lastmisnu6 lastmisnu5 lastmisnj gondou makyosen srdarwinj srdarw
 RUNS := lm_attract lm_play go_attract go_play sr_attract sr_play go_flip sr_flip \
         $(addprefix clone_,$(CLONES))
 
-.PHONY: roms-check regions mame-regions oracle oracle-verify analyze m0 clean-out
+.PHONY: roms-check regions mame-regions oracle oracle-verify analyze m0 clean-out \
+        m1 m1-gfx m1-build m1-verify m1-verify-latch m1-synth m1-krnflip m1-vislog m1-midscan m1-capacity
 
 roms-check:
 	$(PY) ../tools/check_roms.py
@@ -87,3 +106,55 @@ m0: roms-check mame-regions oracle oracle-verify analyze
 
 clean-out:
 	rm -rf $(OUT) build runs.txt
+
+# ---------------------------------------------------------------- M1
+VERILATOR ?= verilator
+RTL       := ../rtl/d8_video.sv ../rtl/d8_snapram.sv ../rtl/d8_dpram.sv ../rtl/d8_fifo.sv
+M1BIN     := build/m1/obj_dir/Vd8_video
+M1LBIN    := build/m1_latch/obj_dir/Vd8_video
+M1KBIN    := build/m1_krnflip/obj_dir/Vd8_video
+VFLAGS    := --cc --exe --build -O3 -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-WIDTHEXPAND \
+             -Wno-WIDTHTRUNC --top-module d8_video -CFLAGS -O2 -j 4
+M1RUNS    := $(addprefix $(OUT)/,$(RUNS))
+
+m1-gfx:
+	$(PY) ../tools/gfx_layout.py --check $(ALLSETS)
+
+$(M1BIN): $(RTL) m1/tb_video.cpp
+	mkdir -p build/m1
+	$(VERILATOR) $(VFLAGS) -Mdir build/m1/obj_dir $(RTL) m1/tb_video.cpp
+
+$(M1LBIN): $(RTL) m1/tb_video.cpp
+	mkdir -p build/m1_latch
+	$(VERILATOR) $(VFLAGS) -GLATCH=1 -Mdir build/m1_latch/obj_dir $(RTL) m1/tb_video.cpp
+
+$(M1KBIN): $(RTL) m1/tb_video.cpp
+	mkdir -p build/m1_krnflip
+	$(VERILATOR) $(VFLAGS) -GKRN_FLIP=1 -Mdir build/m1_krnflip/obj_dir $(RTL) m1/tb_video.cpp
+
+m1-build: $(M1BIN) $(M1LBIN) $(M1KBIN)
+
+m1-verify: $(M1BIN)
+	$(PY) m1/replay.py $(M1RUNS) --jobs $(JOBS) --quiet
+
+m1-verify-latch: $(M1LBIN)
+	$(PY) m1/replay.py $(M1RUNS) --jobs $(JOBS) --quiet --latch
+
+m1-synth: $(M1BIN)
+	$(PY) m1/make_scenes.py build/m1/scenes
+	$(PY) m1/replay.py build/m1/scenes/* --jobs $(JOBS) --quiet
+
+m1-krnflip: $(M1KBIN)
+	$(PY) m1/make_scenes.py build/m1/scenes_krnflip --krnflip
+	$(PY) m1/replay.py build/m1/scenes_krnflip/* --jobs $(JOBS) --quiet --krnflip --model_only
+
+m1-vislog:
+	$(PY) mame/vislog_runs.py --jobs $(JOBS)
+
+m1-midscan: $(M1BIN) $(M1LBIN)
+	$(PY) m1/midscan.py $(RUNS) --jobs $(JOBS)
+
+m1-capacity: $(M1BIN)
+	$(PY) m1/capacity.py
+
+m1: m1-gfx m1-build m1-verify m1-verify-latch m1-synth m1-krnflip m1-midscan

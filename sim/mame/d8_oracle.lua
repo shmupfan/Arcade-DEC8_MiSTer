@@ -12,6 +12,14 @@
 --   NO_SNAP      1 = skip snap.png
 --   HEAVY_LOG    1 = log every palette/sprite/tile RAM write row by row
 --                (default: per-frame per-class summaries only)
+--   VISLOG       1 = M1 mid-scan input: write vislog.csv with every write
+--                during the visible scan (lines 8-247) to the palette, fix
+--                RAM, bg RAM (value before the write) and to every register
+--                that sets scroll, flip or copies the sprite buffer (MAME's
+--                m_scroll[0..3] and flip before the write); for each visible
+--                sprite buffer copy, the buffer before it and the live sprite
+--                RAM it copies go to copies/<n>.buf and copies/<n>.live
+--   NO_DUMP      1 = no frame dumps (VISLOG reruns)
 --   INPUTS       "frame:PORT:Field name:value;..." input events
 --   FIELDS       "PORT:Field name:value;..." DIP user values at start
 --
@@ -62,6 +70,8 @@ local total = tonumber(os.getenv("TOTAL") or "0")
 if total == 0 then total = maxdump end
 if total == 0 then total = 600 end
 local heavy = os.getenv("HEAVY_LOG") == "1"
+local vislog = os.getenv("VISLOG") == "1"
+local no_dump = os.getenv("NO_DUMP") == "1"
 
 local MACHINE = {
   lastmisn = "lastmisn", lastmisnu6 = "lastmisn", lastmisnu5 = "lastmisn", lastmisnj = "lastmisn",
@@ -177,7 +187,73 @@ local pal_written = {}
 local PALBASE = ({ lastmisn = 0x1000, gondo = 0x2800, srdarwin = 0x2800, srdarwinb = 0x2800 })[machine_name]
 local PALXBASE = ({ lastmisn = 0x1400, gondo = 0x2c00, srdarwin = 0x3000, srdarwinb = 0x3000 })[machine_name]
 
+local function item_bytes(it)
+  local parts = {}
+  local char = string.char
+  for i = 0, it.count - 1 do
+    local v = it:read(i)
+    if it.size == 1 then parts[#parts + 1] = char(v & 0xff)
+    else parts[#parts + 1] = char((v >> 8) & 0xff, v & 0xff) end
+  end
+  return table.concat(parts)
+end
+
+local function share_bytes(tag)
+  local s = m.memory.shares[tag]
+  local parts = {}
+  local char = string.char
+  for a = 0, s.size - 1 do parts[#parts + 1] = char(s:read_u8(a)) end
+  return table.concat(parts)
+end
+
+local function wfile(path, data)
+  local f = assert(io.open(path, "wb"))
+  f:write(data)
+  f:close()
+end
+
+-- VISLOG (M1): visible-scan writes with the state before each write
+local FIXBASE = ({ lastmisn = 0x2000, gondo = 0x1800, srdarwin = 0x0800, srdarwinb = 0x0800 })[machine_name]
+local BGBASE = ({ lastmisn = 0x3800, gondo = 0x2000, srdarwin = 0x1400, srdarwinb = 0x1400 })[machine_name]
+local RAMSHARE = { pal = { ":palette", PALBASE }, palx = { ":palette_ext", PALXBASE },
+                   fixram = { ":videoram", FIXBASE }, bgram = { ":bg_ram", BGBASE } }
+local REGCLASS = { scrollx = true, scrolly = true, control = true, flip = true, scroll = true,
+                   bank = true, spr_buffer = true }
+local it_strobe = (machine_name == "gondo") and item_of(":", "0/m_buffer_strobe") or nil
+local vlog, ncopy = nil, 0
+if vislog then
+  os.execute("mkdir -p '" .. outdir .. "/copies'")
+  vlog = assert(io.open(outdir .. "/vislog.csv", "w"))
+  vlog:write("scan_frame,line,hpos,cpu,kind,class,addr,data,old,sc0,sc1,sc2,sc3,flip,copy\n")
+end
+
+local function vis_entry(cpu, class, addr, data, line, hpos, scan)
+  if RAMSHARE[class] then
+    local sh = m.memory.shares[RAMSHARE[class][1]]
+    local old = sh:read_u8(addr - RAMSHARE[class][2])
+    vlog:write(string.format("%d,%d,%d,%s,ram,%s,%04x,%x,%x,,,,,,\n", scan, line, hpos, cpu, class, addr, data, old))
+  elseif REGCLASS[class] then
+    -- a sprite buffer copy: lastmisn 0x1805 and srdarwin 0x1804 on any write,
+    -- gondo 0x3828 on a rising edge of bit 2 (dec8_v.cpp ghostb buffer_spriteram_w)
+    local copy = ""
+    local is_copy = (class == "spr_buffer") or
+      (machine_name == "gondo" and addr == 0x3828 and (data & 4) ~= 0 and it_strobe and it_strobe:read(0) == 0)
+    if is_copy then
+      ncopy = ncopy + 1
+      copy = tostring(ncopy)
+      wfile(string.format("%s/copies/%d.buf", outdir, ncopy), item_bytes(it_sprbuf))
+      wfile(string.format("%s/copies/%d.live", outdir, ncopy), share_bytes(":spriteram"))
+    end
+    vlog:write(string.format("%d,%d,%d,%s,reg,%s,%04x,%x,,%d,%d,%d,%d,%d,%s\n", scan, line, hpos, cpu, class, addr,
+      data, it_scroll:read(0), it_scroll:read(1), it_scroll:read(2), it_scroll:read(3), it_flipx:read(0), copy))
+  end
+end
+
 local function logw(cpu, class, addr, data)
+  if vislog then
+    local line, hpos, scan = beam()
+    if is_visible(line) then vis_entry(cpu, class, addr, data, line, hpos, scan) end
+  end
   if class == "pal" then pal_written[addr - PALBASE] = true end
   if class == "palx" then pal_written[addr - PALXBASE] = true end
   hits[class] = (hits[class] or 0) + 1
@@ -233,31 +309,6 @@ end
 ---------------------------------------------------------------------------
 -- state dump
 ---------------------------------------------------------------------------
-local function item_bytes(it)
-  local parts = {}
-  local char = string.char
-  for i = 0, it.count - 1 do
-    local v = it:read(i)
-    if it.size == 1 then parts[#parts + 1] = char(v & 0xff)
-    else parts[#parts + 1] = char((v >> 8) & 0xff, v & 0xff) end
-  end
-  return table.concat(parts)
-end
-
-local function share_bytes(tag)
-  local s = m.memory.shares[tag]
-  local parts = {}
-  local char = string.char
-  for a = 0, s.size - 1 do parts[#parts + 1] = char(s:read_u8(a)) end
-  return table.concat(parts)
-end
-
-local function wfile(path, data)
-  local f = assert(io.open(path, "wb"))
-  f:write(data)
-  f:close()
-end
-
 local function sprite_count(buf)
   -- visible sprite entries, as the M0 sprite statistics count them
   local n = 0
@@ -384,7 +435,7 @@ _G._d8_frame = emu.add_machine_frame_notifier(function()
     wfile(pending_pixels .. "/palette_next.bin", share_bytes(":palette") .. share_bytes(":palette_ext"))
     pending_pixels = nil
   end
-  if dump_frames[frame] then dump_frame(frame, cur) end
+  if dump_frames[frame] and not no_dump then dump_frame(frame, cur) end
   prev_sprbuf = cur
   local ev = events[frame]
   if ev then
@@ -395,6 +446,7 @@ _G._d8_frame = emu.add_machine_frame_notifier(function()
   end
   if frame > total then
     wlog:close(); sumlog:close(); ftrace:close(); ilog:close()
+    if vlog then vlog:close() end
     local s = assert(io.open(outdir .. "/summary.txt", "w"))
     s:write(string.format("set %s machine %s frames %d\n", setname, machine_name, frame))
     s:write(vpos_check .. "\n")
