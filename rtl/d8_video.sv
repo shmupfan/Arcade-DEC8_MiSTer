@@ -81,6 +81,7 @@ module d8_video #(
     output logic        o_hs,
     output logic        o_vs,
     output logic        o_vbl,           // one clk at the start of line 248 (NMI, MCU INT0)
+    output logic [8:0]  o_vcnt,          // current line (M2: MAME's vblank = lines 248-271, 0-7)
     output logic        o_busy,          // a snapshot engine is running
     output logic        o_hold,          // a CPU write is held by a snapshot engine
 
@@ -124,6 +125,7 @@ module d8_video #(
   wire latch_now  = last_px && vcnt == 9'(LATCH_LINE - 1);
   wire line_start = ce_pix && hcnt == 9'd0;
   always_ff @(posedge clk) o_vbl <= rst_n && vbl_start;
+  assign o_vcnt = vcnt;
 
   // ================================================================ registers
   logic [7:0] sc [0:3];          // MAME m_scroll[0..3]: x MSB, x LSB, y MSB, y LSB

@@ -22,6 +22,12 @@
 --   NO_DUMP      1 = no frame dumps (VISLOG reruns)
 --   INPUTS       "frame:PORT:Field name:value;..." input events
 --   FIELDS       "PORT:Field name:value;..." DIP user values at start
+--   MAINRAM      1 = M2: also dump per dump frame ram.bin (CPU work RAM in
+--                the core's d8_sys layout: lastmisn share1 0x0000-0x0fff at
+--                0, share2 0x3000-0x37ff at 0x1000; gondo 0x0000-0x17ff;
+--                srdarwin 0x0000-0x05ff at 0, 0x1000-0x13ff at 0x1800),
+--                mcuram.bin (i8751 internal RAM 0x00-0x7f) and cpu.json
+--                (main/sub PC, S, CC; MCU PC; the glue state m_i8751_*)
 --
 -- Frame numbering (as in the Dooyong, 1945k III and Tecmo 16 oracles): the
 -- frame notifier runs inside screen vblank_begin (line 248, dec8.cpp
@@ -72,6 +78,7 @@ if total == 0 then total = 600 end
 local heavy = os.getenv("HEAVY_LOG") == "1"
 local vislog = os.getenv("VISLOG") == "1"
 local no_dump = os.getenv("NO_DUMP") == "1"
+local mainram = os.getenv("MAINRAM") == "1"
 
 local MACHINE = {
   lastmisn = "lastmisn", lastmisnu6 = "lastmisn", lastmisnu5 = "lastmisn", lastmisnj = "lastmisn",
@@ -330,6 +337,44 @@ end
 
 local pending_pixels = nil
 
+-- M2: CPU work RAM in d8_sys's layout, MCU internal RAM, CPU state
+local RAMLAYOUT = {
+  lastmisn = { { 0x0000, 0x1000, 0x0000 }, { 0x3000, 0x0800, 0x1000 } },
+  gondo = { { 0x0000, 0x1800, 0x0000 } },
+  srdarwin = { { 0x0000, 0x0600, 0x0000 }, { 0x1000, 0x0400, 0x1800 } },
+}
+RAMLAYOUT.srdarwinb = RAMLAYOUT.srdarwin
+local function dump_mainram(d)
+  local img = {}
+  for i = 1, 8192 do img[i] = 0 end
+  for _, r in ipairs(RAMLAYOUT[machine_name]) do
+    for k = 0, r[2] - 1 do img[r[3] + k + 1] = main:read_u8(r[1] + k) end
+  end
+  local parts = {}
+  for i = 1, 8192 do parts[i] = string.char(img[i]) end
+  wfile(d .. "/ram.bin", table.concat(parts))
+  local js = {}
+  local function st(tag, name)
+    local dev = m.devices[tag]
+    if not dev or not dev.state[name] then return -1 end
+    return dev.state[name].value
+  end
+  js[#js + 1] = string.format('  "main_pc": %d, "main_s": %d, "main_cc": %d', st(":maincpu", "PC"), st(":maincpu", "S"), st(":maincpu", "CC"))
+  if sub then
+    js[#js + 1] = string.format('  "sub_pc": %d, "sub_s": %d, "sub_cc": %d', st(":sub", "PC"), st(":sub", "S"), st(":sub", "CC"))
+  end
+  local mcu = m.devices[":mcu"]
+  if mcu then
+    wfile(d .. "/mcuram.bin", share_bytes(":mcu:internal_ram"))
+    js[#js + 1] = string.format('  "mcu_pc": %d, "mcu_sp": %d, "mcu_p0": %d, "mcu_p1": %d, "mcu_p2": %d, "mcu_p3": %d, "mcu_tcon": %d',
+      st(":mcu", "PC"), st(":mcu", "SP"), st(":mcu", "P0"), st(":mcu", "P1"), st(":mcu", "P2"), st(":mcu", "P3"), st(":mcu", "TCON"))
+    local function di(name) local it = item_of(":", "0/" .. name); return it and it:read(0) or -1 end
+    js[#js + 1] = string.format('  "i8751_value": %d, "i8751_return": %d, "i8751_port0": %d, "i8751_port1": %d, "i8751_p2": %d',
+      di("m_i8751_value"), di("m_i8751_return"), di("m_i8751_port0"), di("m_i8751_port1"), di("m_i8751_p2"))
+  end
+  wfile(d .. "/cpu.json", "{\n" .. table.concat(js, ",\n") .. "\n}\n")
+end
+
 local function dump_frame(n, sprbuf)
   local d = string.format("%s/frames/%06d", outdir, n)
   os.execute("mkdir -p '" .. d .. "'")
@@ -369,6 +414,7 @@ local function dump_frame(n, sprbuf)
   js[#js + 1] = string.format('  "bank_data": %d', it_bank and it_bank:read(0) or -1)
   js[#js + 1] = string.format('  "sprites": %d', sprite_count(sprbuf))
   wfile(d .. "/state.json", "{\n" .. table.concat(js, ",\n") .. "\n}\n")
+  if mainram then dump_mainram(d) end
   if not no_snap then screen:snapshot(d .. "/snap.png") end
 end
 

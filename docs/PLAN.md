@@ -38,11 +38,11 @@ srdarwin) are the accuracy references.
 
 | Block | Candidate | Licence | Status |
 |---|---|---|---|
-| MC6809E x2 (lastmisn), MC6809E (srdarwin) | jtframe `mc6809i.v` (Greg Miller, "Cycle-Accurate 6809 Core"), as wrapped by `jtframe_sys6809.v` | header has a copyright line, no licence text: needs-review before vendoring | M2 |
-| HD6309E (gondo) | the same 6809 core: the 2,930-frame attract trace (36.1 M instructions) shows only 6809 mnemonics and no LDMD, so the 6309 stays in emulation mode, where its timing equals the 6809's; a gameplay trace must confirm (R4) | as above | M2 |
+| MC6809E x2 (lastmisn), MC6809E (srdarwin) | jtframe `mc6809i.v` (Greg Miller, "Cycle-Accurate 6809 Core"), as wrapped by `jtframe_sys6809.v` | BSD-3-Clause (cavnex/mc6809 LICENSE.md; R11 closed); vendored with PROVENANCE in rtl/vendor/mc6809i | M2 (DONE) |
+| HD6309E (gondo; the board's component list says 6809E, R16) | the same 6809 core: the 2,930-frame attract trace (36.1 M instructions) shows only 6809 mnemonics and no LDMD, so the 6309 stays in emulation mode, where its timing equals the 6809's; confirmed on gameplay in M2 (R4 closed) | as above | M2 (DONE) |
 | R65C02 (lastmisn, gondo sound) | jtcores `jt65c02` (jt680x) | GPL-3.0-or-later | M3 |
 | DECO 222 (srdarwin sound) | 6502 with opcode-fetch bits 5 and 6 swapped (deco222.cpp): a wrapper on a 6502 core (jt65c02 in 6502 mode or T65) | own wrapper | M3 |
-| i8751 | jtcores `jt8051` | GPL-3.0-or-later | M2 |
+| i8751 | jtcores `jt8051`, vendored with its generated microcode and three documented patches (rtl/vendor/jt8051/PROVENANCE.md) | GPL-3.0-or-later | M2 (DONE) |
 | YM2203 | jt03 (vendored in dooyong-mister/rtl/vendor, with PROVENANCE) | GPL-3.0-or-later | M3 |
 | YM3526 (lastmisn, gondo), YM3812 (srdarwin) | jotego jtopl / jtopl2 (jtcores submodule) | GPL-3.0-or-later | M3 |
 | Karnov sprite chip (lastmisn, gondo) | jtcores `jtkarnov_obj.v` as a reference; the sprite list semantics here are MAME's deckarn.cpp; reuse only where it matches the oracle exactly (verified, not assumed), as Tecmo 16 did with jtgaiden | GPL-3.0-or-later | M1 |
@@ -55,7 +55,7 @@ srdarwin) are the accuracy references.
 |---|---|---|
 | M0 | spec, ROM checks, region builder, MAME oracle, reference renderer | 10/10 sets, regions byte-identical, renderer pixel-exact on every captured frame (DONE, docs/m0_findings.md) |
 | M1 | video RTL for the three machines | RTL pixel-exact against MAME on every M0 frame; mid-scan writes rendered live and every differing frame classified; synthetic scenes against the renderer; line budget with a pessimistic ROM model (DONE, docs/m1_findings.md) |
-| M2 | full system: 6809 x2 / 6309-as-6809 / 6809, i8751, memory maps, interrupts, MCU protocol, inputs, DIPs | boots from power-on match MAME's I/O streams, images and RAM; divergences root-caused |
+| M2 | full system: 6809 x2 / 6309-as-6809 / 6809, i8751, memory maps, interrupts, MCU protocol, inputs, DIPs | boots from power-on match MAME's I/O streams, images and RAM; divergences root-caused (DONE, docs/m2_findings.md) |
 | M3 | sound: 6502/R65C02/DECO 222, YM2203, YM3526/YM3812, latches and NMIs | register streams and level against MAME WAVs |
 | M4 | MiSTer shell, SDRAM, MRAs (DIPs from the driver, machine byte, srdarwinb sprite byte swap done by the MRA interleave), rotary input for Gondomania, Quartus timing at 96 MHz | board sim equals M2; timing closed; first RBF on hardware |
 | M5 | hardware QA, release to the shmupfan database | |
@@ -99,12 +99,16 @@ shell edge case to test (1945k III known issue 9.1).
 | R1 | What do the BAD_DUMP MCU programs (lastmisn "e", gondo "e" hand-crafted, srdarwinj) differ in; is the gondo second coin failure (MAME TODO) a property of the hacked dump? | a verified dump of each MCU; comparing gondo with gondou behaviour in M2 |
 | R2 | Priority PROMs (dl-14.9c, ds-23.b10, dy_11.c11) are unused by MAME; MAME's fixed rules may differ from the hardware | decode the PROMs against MAME's rules in M1; PCB footage of overlaps |
 | R3 | Sprite buffer copy duration and timing (MAME copies instantly at the write) | schematics (gondo schematics exist per MAME comments) or PCB timing |
-| R4 | Does Gondomania ever enter 6309 native mode or use 6309-only opcodes in gameplay? | gameplay trace in M2 (attract: none in 36.1 M instructions) |
+| R4 | Does Gondomania ever enter 6309 native mode or use 6309-only opcodes in gameplay? | CLOSED (M2): gameplay trace of 6,000 frames, 72.3 M instructions, 90 distinct mnemonics, all 6809, no LDMD (m2_findings 1) |
 | R5 | Live rendering of mid-scan tile/palette/scroll writes vs MAME's frame-at-once | frame-by-frame PCB footage of a frame with a mid-scan text or scroll write |
 | R6 | srdarwin double-height sprites at the top are clipped in MAME (TODO): do they wrap on hardware? | PCB footage of a sprite entering from the top |
 | R7 | The Karnov sprite chip's flip flag is never set in dec8.cpp, so MAME draws lastmisn/gondo sprites unflipped when the screen is flipped; the M0 flip run matches MAME this way. Does the hardware flip them, or does the program compensate? | PCB footage in flip mode (a research task is searching YouTube for real PCB 1CC footage, decision 5.4); the program's sprite coordinates in flipped frames |
-| R8 | gondo NMI-enable latency ("1 more opcode") and MCU INT1 auto-clear (4 vs 64 ticks, not confirmed) | schematics, M2 interrupt timing against MAME |
+| R8 | gondo NMI-enable latency ("1 more opcode") and MCU INT1 auto-clear (4 vs 64 ticks, not confirmed) | INT1: the Gondomania schematic [GONDO-TSM sheet 26, PDF p. 44] drives 8751 INT1 from QA of a 74LS194 shifting ones in from *SECREQ, low for four *12H clocks (two readings agree, m2_findings 5), supporting MAME's 4 ticks; *12H frequency still to read. NMI enable: the DE-0269 gate sheet, not yet traced. M2 implements MAME (enable one 3 MHz CPU cycle after the write; INT1 4 ticks of 1.5 MHz); interrupt counts per frame equal MAME's |
 | R9 | srdarwin MCU clock ("unknown frequency") and main CPU type ("MC68A09EP or HD63?09EP") | PCB photos |
 | R10 | srdarwin fix layer colour fixed at 0 ("?") | PCB footage of the text layer colours |
-| R11 | mc6809i licence | the original repository's licence file |
+| R11 | mc6809i licence | CLOSED (M2): BSD-3-Clause, cavnex/mc6809 documentation/LICENSE.md (rtl/vendor/mc6809i/PROVENANCE.md) |
 | R12 | Does the PCB limit sprites per line? The core draws the whole list (256 Karnov, 128 srdarwin) on one line (m1_findings 4) | PCB footage of a crowded line; schematics |
+| R13 | Last Mission's MCU writes 0x00 to its own P0 and then reads the main CPU's byte from P0; MAME forces the P0 input bits to the latched byte on P2.4 falling (dec8.cpp:741-746). The 8751's P0 is open drain and needs a 1 in the latch to read (MCS51 p. 3-7), so the board must overdrive it. M2 reproduces MAME (jt8051 patch 2). How does the board do it? | the Last Mission schematic (jammarcade scan, 23 MB, not read) |
+| R14 | 8051 interrupt response: jt8051 latches at S5P2 and polls in the next machine cycle, at least 3 machine cycles to the service routine, as Intel documents (MCS51 p. 3-25, 3-26); MAME enters at the next instruction boundary. Changes Gondomania's random source in gameplay and SRD's MCU clock (m2_findings 3.3 to 3.8). CPU rule settled for the core | the board's INT0 edge against the MCU clock (logic analyser on a PCB) |
+| R15 | mc6809i (jtframe copy) clears V on SEX; MAME leaves V unchanged. Motorola disagrees with itself (6809E data sheet PDF p. 31: V cleared; programming manual p. A-62: not affected). No compared stream differs because of it | a hard-part test of SEX on V |
+| R16 | Gondomania main CPU: the DE-0269 component list says 6809E (GONDO-TSM manual p. 3, PDF p. 22); MAME says HD63C09EP at 3 MHz, above Motorola's fastest 6809E grade (2.0 MHz). The core runs a 6809E at 3 MHz (m2_findings 2.1) | the CPU clock on the DE-0269 schematics (GONDO-TSM PDF p. 29-48) |

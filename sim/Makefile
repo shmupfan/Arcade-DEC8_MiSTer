@@ -158,3 +158,19 @@ m1-capacity: $(M1BIN)
 	$(PY) m1/capacity.py
 
 m1: m1-gfx m1-build m1-verify m1-verify-latch m1-synth m1-krnflip m1-midscan
+
+# ---------------------------------------------------------------- M2
+# full system (d8_sys: 6809s, i8751, maps, interrupts, video); see
+# docs/m2_findings.md. The MCU microcode file is passed by absolute path.
+M2RTL   := ../rtl/d8_sys.sv ../rtl/d8_mcu.sv $(RTL) ../rtl/vendor/mc6809i/mc6809i.v \
+           $(wildcard ../rtl/vendor/jt8051/jt8051*.v)
+M2BIN   := build/m2/obj_dir/Vd8_sys
+M2FLAGS := --cc --exe --build -O3 --x-assign fast --x-initial fast -Wno-fatal -Wno-lint -Wno-style -Wno-UNOPTFLAT -Wno-SYNCASYNCNET \
+           --top-module d8_sys -I../rtl/vendor/jt8051 -DSIMULATION \
+           -DJT8051_UCFILE='"$(abspath ../rtl/vendor/jt8051/jt8051.uc)"' -CFLAGS "-O3 -march=native" -j 4
+
+$(M2BIN): $(M2RTL) m2/tb_sys.cpp
+	mkdir -p build/m2
+	$(VERILATOR) $(M2FLAGS) -Mdir build/m2/obj_dir $(M2RTL) m2/tb_sys.cpp
+
+m2-build: $(M2BIN)

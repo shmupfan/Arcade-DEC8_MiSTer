@@ -1,0 +1,1 @@
+MAME 0.288 (tag mame0288) CPU cores used as the M2 oracle reference: src/devices/cpu/mcs51/{i8051.cpp,i8051.h,mcs51ops.cpp}, src/devices/cpu/m6809/{m6809.cpp,m6809.h,m6809.lst,base6x09.lst,m6809inl.h,hd6309.cpp,hd6309.h}. BSD-3-Clause. Fetched 2026-10-03 for reading only (not built).
