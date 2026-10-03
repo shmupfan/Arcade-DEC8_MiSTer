@@ -34,6 +34,14 @@
 //   controller's worst case in the other cores)
 //   graphics ROM model as m1/tb_video.cpp: +intv=N (8) +lat=N (9)
 //   +pause=F:N hold i_pause for N frames from vblank F
+//   M3 (sound board, d8_snd): the sound ROM (sdram 0x068000-0x06FFFF) is
+//   loaded before reset; +snd=FILE writes every sound event as the
+//   oracle's sndlog.csv ("t,frame,kind,addr,data", t in seconds from reset
+//   release): L main latch write, Y/P 6502 write to the YM2203 / OPL, R
+//   6502 read of the latch or a chip, U other unmapped access, N/I 6502 read
+//   of FFFA / FFFE (interrupt vector, low byte); +aud=FILE writes 48 kHz
+//   frames of 4 int16 (FM, SSG, OPL, mix) sampled every 2000 clocks; at
+//   every capture frame the 6502 RAM (0000-05FF) as .snd
 
 #include "Vd8_sys.h"
 #include "Vd8_sys___024root.h"
@@ -276,6 +284,22 @@ int main(int argc, char **argv) {
         if (!bs.empty()) sscanf(bs.c_str(), "%ld:%ld:%511s", &bt0, &bt1, bt_file);
     }
     FILE *fbus = bt_file[0] ? fopen(bt_file, "w") : nullptr;
+    FILE *fsnd = nullptr, *faud = nullptr;
+    {
+        std::string sf = plus("snd", ""), af = plus("aud", "");
+        if (!sf.empty()) { fsnd = fopen(sf.c_str(), "w"); fprintf(fsnd, "t,frame,kind,addr,data\n"); }
+        if (!af.empty()) faud = fopen(af.c_str(), "wb");
+    }
+    // +sndtrace=F0:F1:FILE: every 6502 opcode fetch from vblank F0 to F1,
+    // "t,pc,op" (t in seconds from reset); instruction lengths in bus
+    // cycles are the differences x 1.5 MHz (m3_findings, cycle audit)
+    long st0 = -1, st1 = -1;
+    char st_file[512] = {0};
+    {
+        std::string ss = plus("sndtrace", "");
+        if (!ss.empty()) sscanf(ss.c_str(), "%ld:%ld:%511s", &st0, &st1, st_file);
+    }
+    FILE *fstr = st_file[0] ? fopen(st_file, "w") : nullptr;
     FILE *fio = nullptr, *fint = nullptr;
     {
         std::string iof = plus("io", ""), inf = plus("ints", "");
@@ -293,14 +317,21 @@ int main(int argc, char **argv) {
     apply_ports();
     top->rst_n = 0;
     top->i_mcu_we = 0;
+    top->i_snd_we = 0;
     for (int i = 0; i < 300; i++) tick();
     for (int a = 0; a < 4096; a++) {
         top->i_mcu_addr = a; top->i_mcu_din = sd(0x080000 + a); top->i_mcu_we = 1;
         tick();
     }
     top->i_mcu_we = 0;
+    for (int a = 0; a < 32768; a++) {
+        top->i_snd_addr = a; top->i_snd_din = sd(0x068000 + a); top->i_snd_we = 1;
+        tick();
+    }
+    top->i_snd_we = 0;
     for (int i = 0; i < 300; i++) tick();
     top->rst_n = 1;
+    const uint64_t t0 = cycles;
 
     auto *r = top->rootp;
     const int mach = si.machine;
@@ -344,6 +375,43 @@ int main(int argc, char **argv) {
                 if (a == 0xfffc && !c) ints[0]++;
                 if (a == 0xfff8) ints[c ? 3 : 1]++;
                 if (a == 0xfff6) ints[c ? 4 : 2]++;
+            }
+        }
+        if (fsnd || faud) {
+            static bool prd = false; static unsigned pa = 0xFFFFFFFF;
+            double t = (double)(cycles - t0) / 96e6;
+            if (fsnd && top->o_snd_wr)
+                fprintf(fsnd, "%.12f,%ld,L,%x,%x\n", t, frame, mach == LM ? 0x180c : mach == GO ? 0x3810 : 0x2000,
+                        top->o_snd_data);
+            if (fstr && frame >= st0 && frame < st1 && r->d8_sys__DOT__u_snd__DOT__cpu_cen) {
+                static bool pf = false; static unsigned pfa = 0xFFFFFFFF;
+                bool f = r->d8_sys__DOT__u_snd__DOT__fetch && r->d8_sys__DOT__u_snd__DOT__rd;
+                unsigned a = r->d8_sys__DOT__u_snd__DOT__A;
+                if (f && (!pf || a != pfa)) fprintf(fstr, "%.9f,%x,%x\n", t, a, r->d8_sys__DOT__u_snd__DOT__din);
+                pf = f; pfa = a;
+            }
+            if (fsnd && r->d8_sys__DOT__u_snd__DOT__cpu_cen) {
+                unsigned a = r->d8_sys__DOT__u_snd__DOT__A;
+                bool rdn = r->d8_sys__DOT__u_snd__DOT__rd && !r->d8_sys__DOT__u_snd__DOT__wr;
+                unsigned ym = mach == LM ? 0x0800 : 0x2000, opl = mach == LM ? 0x1000 : 0x4000, lat = mach == LM ? 0x3000 : 0x6000;
+                if (r->d8_sys__DOT__u_snd__DOT__wev) {
+                    unsigned d = r->d8_sys__DOT__u_snd__DOT__dout;
+                    if ((a & ~1u) == ym) fprintf(fsnd, "%.12f,%ld,Y,%x,%x\n", t, frame, a, d);
+                    else if ((a & ~1u) == opl) fprintf(fsnd, "%.12f,%ld,P,%x,%x\n", t, frame, a, d);
+                    else if (a >= 0x0600 && a < 0x8000 && a != lat) fprintf(fsnd, "%.12f,%ld,U,%x,%x\n", t, frame, a + 0x10000, d);
+                }
+                if (rdn && (!prd || a != pa)) {
+                    unsigned d = r->d8_sys__DOT__u_snd__DOT__din;
+                    if ((a & ~1u) == ym || (a & ~1u) == opl || a == lat) fprintf(fsnd, "%.12f,%ld,R,%x,%x\n", t, frame, a, d);
+                    else if (a >= 0x0600 && a < 0x8000) fprintf(fsnd, "%.12f,%ld,U,%x,%x\n", t, frame, a, d);
+                    else if (a == 0xfffa) fprintf(fsnd, "%.12f,%ld,N,%x,%x\n", t, frame, a, d);
+                    else if (a == 0xfffe) fprintf(fsnd, "%.12f,%ld,I,%x,%x\n", t, frame, a, d);
+                }
+                prd = rdn; pa = a;
+            }
+            if (faud && (cycles - t0) % 2000 == 0) {
+                int16_t v[4] = {(int16_t)top->o_fm, (int16_t)top->o_ssg, (int16_t)top->o_opl, (int16_t)top->o_audio};
+                fwrite(v, 2, 4, faud);
             }
         }
         bool ce = top->o_ce_pix;
@@ -394,6 +462,9 @@ int main(int argc, char **argv) {
                 for (int i = 0; i < 128; i++) mram[i] = r->d8_sys__DOT__u_mcu__DOT__ram[i];
                 dump(base + ".ram", ram.data(), ram.size());
                 dump(base + ".mcu", mram.data(), mram.size());
+                std::vector<uint8_t> sram(1536);
+                for (int i = 0; i < 1536; i++) sram[i] = r->d8_sys__DOT__u_snd__DOT__ram[i];
+                dump(base + ".snd", sram.data(), sram.size());
                 FILE *fr = fopen((base + ".regs").c_str(), "w");
                 fprintf(fr, "bank %d m_irq %d m_firq %d s_irq %d s_firq %d int0 %d int1 %d\n",
                         r->d8_sys__DOT__bank, r->d8_sys__DOT__m_irq, r->d8_sys__DOT__m_firq,
@@ -401,17 +472,20 @@ int main(int argc, char **argv) {
                 fclose(fr);
             }
             if (frame % 500 == 0) {
-                printf("vblank %ld overruns %d maxcyc %d verr %d promlate %d unmapped %d xacc %d\n", frame,
+                printf("vblank %ld overruns %d maxcyc %d verr %d promlate %d unmapped %d xacc %d sndunm %d\n", frame,
                        top->o_dbg_overruns, top->o_dbg_maxcyc, top->o_dbg_verr, top->o_dbg_prom_late,
-                       top->o_dbg_unmapped, top->o_dbg_xacc);
+                       top->o_dbg_unmapped, top->o_dbg_xacc, top->o_dbg_snd_unmapped);
                 fflush(stdout);
             }
         }
     }
-    printf("DONE vblanks %ld cycles %llu overruns %d maxcyc %d verr %d promlate %d unmapped %d xacc %d\n", frame,
+    printf("DONE vblanks %ld cycles %llu overruns %d maxcyc %d verr %d promlate %d unmapped %d xacc %d sndunm %d\n", frame,
            (unsigned long long)cycles, top->o_dbg_overruns, top->o_dbg_maxcyc, top->o_dbg_verr,
-           top->o_dbg_prom_late, top->o_dbg_unmapped, top->o_dbg_xacc);
+           top->o_dbg_prom_late, top->o_dbg_unmapped, top->o_dbg_xacc, top->o_dbg_snd_unmapped);
     if (fio) fclose(fio);
+    if (fsnd) fclose(fsnd);
+    if (fstr) fclose(fstr);
+    if (faud) fclose(faud);
     if (fint) fclose(fint);
     if (fmcu) fclose(fmcu);
     if (ftr) fclose(ftr);

@@ -14,7 +14,7 @@
 //   - memory maps (dec8:301-350, 451-472, 562-592), work RAM, bank and
 //     control registers, inputs, interrupt registers and gates
 //   - d8_video (M1) with the CPU side decoded here
-//   - the sound latch is written here; the sound CPU is M3
+//   - the sound latch is written here; the sound board is d8_snd (M3)
 //
 // Clocking (96 MHz system clock, one clock domain):
 //   CPU bus cycle = P clocks: P = 64 (1.5 MHz E) or 32 (gondo 3 MHz E).
@@ -76,9 +76,20 @@ module d8_sys #(
     input  logic        i_rom_rv,
     input  logic [31:0] i_rom_data,
 
-    // sound latch (M3)
+    // sound latch (also inside: d8_snd)
     output logic        o_snd_wr,
     output logic [7:0]  o_snd_data,
+
+    // sound board (M3, d8_snd): ROM load (8000-FFFF, before reset is
+    // released) and audio
+    input  logic        i_snd_we,
+    input  logic [14:0] i_snd_addr,
+    input  logic [7:0]  i_snd_din,
+    output logic signed [15:0] o_fm,
+    output logic        [9:0]  o_ssg,
+    output logic signed [15:0] o_opl,
+    output logic signed [15:0] o_audio,
+    output logic [15:0] o_dbg_snd_unmapped,
 
     // video
     output logic [7:0]  o_r,
@@ -630,6 +641,14 @@ module d8_sys #(
 
   // ================================================================ video
   /* verilator lint_off PINCONNECTEMPTY */
+  // ================================================================ sound (M3)
+  d8_snd u_snd (
+    .clk(clk), .rst_n(rst_n), .i_pause(i_pause), .i_machine(i_machine),
+    .i_latch_wr(o_snd_wr), .i_latch_d(o_snd_data),
+    .i_rom_we(i_snd_we), .i_rom_addr(i_snd_addr), .i_rom_din(i_snd_din),
+    .o_fm(o_fm), .o_ssg(o_ssg), .o_opl(o_opl), .o_mix(o_audio),
+    .o_dbg_unmapped(o_dbg_snd_unmapped), .o_dbg_rom_writes());
+
   d8_video #(.LATCH(LATCH), .KRN_FLIP(KRN_FLIP)) u_video (
       .clk, .rst_n, .ce_pix, .i_machine,
       .i_cpu_addr(v_addr), .i_cpu_din(v_din),

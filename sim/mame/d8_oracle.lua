@@ -124,6 +124,7 @@ local HEAVY = { pal = true, palx = true, spr = true, fixram = true, bgram = true
 
 local main = m.devices[":maincpu"].spaces["program"]
 local sub = (machine_name == "lastmisn") and m.devices[":sub"].spaces["program"] or nil
+local sndsp = m.devices[":audiocpu"].spaces["program"]
 local screen = m.screens[":screen"]
 
 ---------------------------------------------------------------------------
@@ -415,6 +416,11 @@ local function dump_frame(n, sprbuf)
   js[#js + 1] = string.format('  "sprites": %d', sprite_count(sprbuf))
   wfile(d .. "/state.json", "{\n" .. table.concat(js, ",\n") .. "\n}\n")
   if mainram then dump_mainram(d) end
+  if os.getenv("SNDLOG") == "1" then
+    local b = {}
+    for a = 0, 0x5ff do b[#b + 1] = string.char(sndsp:read_u8(a)) end
+    wfile(d .. "/snd.bin", table.concat(b))
+  end
   if not no_snap then screen:snapshot(d .. "/snap.png") end
 end
 
@@ -455,11 +461,70 @@ for tok in string.gmatch(os.getenv("FIELDS") or "", "([^;]+)") do
 end
 
 ---------------------------------------------------------------------------
+-- M3: SNDLOG=1 writes sndlog.csv, every sound-side event with MAME's
+-- emulated time (machine.time inside a tap is the executing CPU's local
+-- time, so main-CPU and 6502 events are placed exactly):
+--   L  main CPU write to the sound latch (lastmisn 0x180c, gondo 0x3810,
+--      srdarwin 0x2000)
+--   Y  6502 write to the YM2203 (addr = offset 0/1)
+--   P  6502 write to the OPL (YM3526 / YM3812, offset 0/1)
+--   R  6502 read of the latch, the YM2203 or OPL range (value returned;
+--      MAME maps the chips write-only, so a chip read is unmapped)
+--   U  6502 read or write of any other unmapped address (0x0600-0x7fff)
+--   N / I  6502 read of the NMI / IRQ vector low byte (0xfffa / 0xfffe):
+--      one per taken interrupt (also BRK, none expected)
+-- and per dump frame snd.bin (6502 RAM 0x0000-0x05ff).
+-- SNDTRACE=F0:F1:file traces the 6502 with MAME's debugger between
+-- notifiers F0 and F1 (needs "-debug -debugger none").
+---------------------------------------------------------------------------
+local slog = nil
+local SNDMAP = ({
+  lastmisn = { ym = 0x0800, opl = 0x1000, latch = 0x3000, mlatch = 0x180c },
+  gondo    = { ym = 0x2000, opl = 0x4000, latch = 0x6000, mlatch = 0x3810 },
+  srdarwin = { ym = 0x2000, opl = 0x4000, latch = 0x6000, mlatch = 0x2000 },
+  srdarwinb= { ym = 0x2000, opl = 0x4000, latch = 0x6000, mlatch = 0x2000 },
+})[machine_name]
+if os.getenv("SNDLOG") == "1" then
+  slog = assert(io.open(outdir .. "/sndlog.csv", "w"))
+  slog:write("t,frame,kind,addr,data\n")
+  local function sl(kind, a, d)
+    slog:write(string.format("%.12f,%d,%s,%x,%x\n", m.time:as_double(), frame, kind, a, d))
+  end
+  local function stap(space, wr, lo, hi, name, fn)
+    local h
+    if wr then h = space:install_write_tap(lo, hi, name, fn)
+    else h = space:install_read_tap(lo, hi, name, fn) end
+    table.insert(_G._d8_taps, h)
+  end
+  stap(main, true, SNDMAP.mlatch, SNDMAP.mlatch, "s_mlatch", function(o, d) sl("L", o, d) end)
+  stap(sndsp, true, SNDMAP.ym, SNDMAP.ym + 1, "s_ym", function(o, d) sl("Y", o, d) end)
+  stap(sndsp, true, SNDMAP.opl, SNDMAP.opl + 1, "s_opl", function(o, d) sl("P", o, d) end)
+  stap(sndsp, false, SNDMAP.ym, SNDMAP.ym + 1, "s_ymr", function(o, d) sl("R", o, d) end)
+  stap(sndsp, false, SNDMAP.opl, SNDMAP.opl + 1, "s_oplr", function(o, d) sl("R", o, d) end)
+  stap(sndsp, false, SNDMAP.latch, SNDMAP.latch, "s_latr", function(o, d) sl("R", o, d) end)
+  -- unmapped: everything in 0x0600-0x7fff that is not one of the three above
+  local mapped = { [SNDMAP.ym] = true, [SNDMAP.ym + 1] = true, [SNDMAP.opl] = true,
+                   [SNDMAP.opl + 1] = true, [SNDMAP.latch] = true }
+  stap(sndsp, false, 0x0600, 0x7fff, "s_ur", function(o, d) if not mapped[o] then sl("U", o, d) end end)
+  stap(sndsp, true, 0x0600, 0x7fff, "s_uw", function(o, d) if not mapped[o] then sl("U", o + 0x10000, d) end end)
+  stap(sndsp, false, 0xfffa, 0xfffa, "s_nmi", function(o, d) sl("N", o, d) end)
+  stap(sndsp, false, 0xfffe, 0xfffe, "s_irq", function(o, d) sl("I", o, d) end)
+end
+local str_f0, str_f1, str_file = (os.getenv("SNDTRACE") or ""):match("^(%d+):(%d+):(.+)$")
+if str_f0 then str_f0, str_f1 = tonumber(str_f0), tonumber(str_f1) end
+
+---------------------------------------------------------------------------
 -- frame notifier
 ---------------------------------------------------------------------------
 local vpos_check = "not checked"
 _G._d8_frame = emu.add_machine_frame_notifier(function()
   frame = frame + 1
+  if str_f0 and frame == str_f0 then
+    -- SNDTRACE_CYC=1 prefixes each line with the 6502's total cycle count
+    local act = os.getenv("SNDTRACE_CYC") == "1" and ',{tracelog "%d ",totalcycles}' or ""
+    m.debugger:command("trace " .. str_file .. ",audiocpu,noloop" .. act)
+  end
+  if str_f1 and frame == str_f1 then m.debugger:command("trace off,audiocpu") end
   if frame == 2 then
     local l, h = beam()
     vpos_check = string.format("beam at notifier: line %d hpos %d (expected %d, 0); visible %dx%d from line %d; total %dx%d; screen frame_number %d at notifier %d",
@@ -493,6 +558,7 @@ _G._d8_frame = emu.add_machine_frame_notifier(function()
   if frame > total then
     wlog:close(); sumlog:close(); ftrace:close(); ilog:close()
     if vlog then vlog:close() end
+    if slog then slog:close() end
     local s = assert(io.open(outdir .. "/summary.txt", "w"))
     s:write(string.format("set %s machine %s frames %d\n", setname, machine_name, frame))
     s:write(vpos_check .. "\n")

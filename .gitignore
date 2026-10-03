@@ -5,3 +5,6 @@ builds/
 __pycache__/
 *.pyc
 sim/runs.txt
+sim/jt12.raw
+sim/jtopl.raw
+sim/opl_wr.log

@@ -162,15 +162,43 @@ m1: m1-gfx m1-build m1-verify m1-verify-latch m1-synth m1-krnflip m1-midscan
 # ---------------------------------------------------------------- M2
 # full system (d8_sys: 6809s, i8751, maps, interrupts, video); see
 # docs/m2_findings.md. The MCU microcode file is passed by absolute path.
+SNDRTL  := ../rtl/d8_snd.sv $(wildcard ../rtl/vendor/jt65c02/jt65c02*.v) \
+           $(wildcard ../rtl/vendor/jt03/hdl/*.v) \
+           $(filter-out %/jtopl.v,$(wildcard ../rtl/vendor/jtopl/hdl/jtopl*.v)) ../rtl/vendor/jtopl/hdl/jtopl.v
 M2RTL   := ../rtl/d8_sys.sv ../rtl/d8_mcu.sv $(RTL) ../rtl/vendor/mc6809i/mc6809i.v \
-           $(wildcard ../rtl/vendor/jt8051/jt8051*.v)
+           $(wildcard ../rtl/vendor/jt8051/jt8051*.v) $(SNDRTL)
 M2BIN   := build/m2/obj_dir/Vd8_sys
 M2FLAGS := --cc --exe --build -O3 --x-assign fast --x-initial fast -Wno-fatal -Wno-lint -Wno-style -Wno-UNOPTFLAT -Wno-SYNCASYNCNET \
-           --top-module d8_sys -I../rtl/vendor/jt8051 -DSIMULATION \
-           -DJT8051_UCFILE='"$(abspath ../rtl/vendor/jt8051/jt8051.uc)"' -CFLAGS "-O3 -march=native" -j 4
+           --top-module d8_sys -I../rtl/vendor/jt8051 -I../rtl/vendor/jt65c02 -I../rtl/vendor/jt03/hdl -I../rtl/vendor/jtopl/hdl -DSIMULATION \
+           -DJT8051_UCFILE='"$(abspath ../rtl/vendor/jt8051/jt8051.uc)"' \
+           -DJT65C02_UCFILE='"$(abspath ../rtl/vendor/jt65c02/deco222.uc)"' -CFLAGS "-O3 -march=native" -j 4
 
 $(M2BIN): $(M2RTL) m2/tb_sys.cpp
 	mkdir -p build/m2
 	$(VERILATOR) $(M2FLAGS) -Mdir build/m2/obj_dir $(M2RTL) m2/tb_sys.cpp
 
 m2-build: $(M2BIN)
+
+# ---------------------------------------------------------------- M3
+# sound board (d8_snd inside d8_sys); see docs/m3_findings.md. Same
+# harness as M2 (m2/tb_sys.cpp) with +snd / +aud, built separately.
+M3BIN   := build/m3/obj_dir/Vd8_sys
+$(M3BIN): $(M2RTL) m2/tb_sys.cpp
+	mkdir -p build/m3
+	nice -n 15 $(VERILATOR) $(M2FLAGS) -Mdir build/m3/obj_dir $(M2RTL) m2/tb_sys.cpp
+
+m3-build: $(M3BIN)
+
+M3RUNS := lm_attract lm_play go_attract go_play sr_attract sr_play
+# MAME: sound log, 48 kHz WAV, 6502 RAM every 100 frames (seconds)
+m3-oracle:
+	$(PY) m3/run_m3.py oracle
+# core: the same six runs (about 35 min each, 3 at a time, nice 15)
+m3-boot: $(M3BIN)
+	$(PY) m3/run_m3.py core
+m3-compare:
+	@for r in $(M3RUNS); do echo "== $$r"; \
+	  $(PY) m3/compare_snd.py build/m3/$$r/sndlog.csv mame/out/m3_$$r/sndlog.csv | head -14; \
+	  $(PY) m3/compare_sndram.py $$r | head -3; \
+	  $(PY) m3/compare_audio.py build/m3/$$r/aud.raw mame/out/m3_$$r/mame.wav --fit | head -12; done
+m3: m3-oracle m3-boot m3-compare
