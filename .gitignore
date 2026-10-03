@@ -1,0 +1,7 @@
+roms/
+sim/build/
+sim/mame/out/
+builds/
+__pycache__/
+*.pyc
+sim/runs.txt
