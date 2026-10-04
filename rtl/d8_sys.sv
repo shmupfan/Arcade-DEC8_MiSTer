@@ -35,10 +35,19 @@
 
 module d8_sys #(
     parameter bit KRN_FLIP = 1'b0,
-    parameter bit LATCH    = 1'b0
+    parameter bit LATCH    = 1'b0,
+    // 1 on the MiSTer board: the pixel enable and the video raster run from
+    // i_pwr_rst_n and keep sync (black picture) while the core is held in
+    // reset (ROM download, reset button); the core is released on the
+    // raster's power-on phase, so its first running clock sees exactly the
+    // state a reset release gives in M2 (as the 1945k III core, m4_findings).
+    // 0 = M1/M2/M3 behaviour.
+    parameter bit FREE_TIMING = 1'b0
 ) (
     input  logic        clk,
     input  logic        rst_n,
+    input  logic        i_pwr_rst_n,     // FREE_TIMING: power-on reset of the raster
+    output logic        o_run,           // core out of reset (effective)
     input  logic [1:0]  i_machine,       // 0 lastmisn, 1 gondo, 2 srdarwin
     input  logic        i_srdb,          // srdarwinb (no MCU, dec8:586-592)
     input  logic        i_pause,
@@ -118,6 +127,23 @@ module d8_sys #(
   wire sr = i_machine == 2'd2;
   wire has_mcu = !(sr && i_srdb);
 
+
+  // ================================================================ reset
+  // FREE_TIMING: tim_evt (d8_video) marks the pixel enable that starts the
+  // power-on line (248); while the core is in reset that enable reloads the
+  // raster and the pixel counter to their reset values instead, and the
+  // core is released on the next clock (tim_fresh).
+  logic tim_evt, tim_fresh, run_q, tim_rst;
+  logic crst_n;
+  wire  tim_load = FREE_TIMING && !crst_n && tim_evt;
+  assign crst_n  = FREE_TIMING ? (rst_n && i_pwr_rst_n && (run_q || tim_fresh)) : rst_n;
+  assign tim_rst = FREE_TIMING ? (!i_pwr_rst_n || tim_load) : !rst_n;
+  always_ff @(posedge clk) begin
+    tim_fresh <= tim_rst;
+    run_q     <= crst_n;
+  end
+  assign o_run = crst_n;
+
   // ================================================================ clocks
   wire [6:0] P = go ? 7'd32 : 7'd64;
   logic [6:0] ph /* verilator public_flat_rd */;
@@ -125,10 +151,11 @@ module d8_sys #(
   logic [3:0] mcnt;
   wire run = !i_pause;
   always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      ph <= '0; pxc <= '0; mcnt <= '0;
+    if (tim_rst) pxc <= '0;
+    else         pxc <= pxc + 4'd1;
+    if (!crst_n) begin
+      ph <= '0; mcnt <= '0;
     end else begin
-      pxc <= pxc + 4'd1;
       if (run) begin
         ph <= (ph == P - 7'd1) ? 7'd0 : ph + 7'd1;
         mcnt <= (mcnt == 4'd11) ? 4'd0 : mcnt + 4'd1;
@@ -154,11 +181,11 @@ module d8_sys #(
   mc6809i u_main (
       .D(m_di), .DOut(m_do), .ADDR(m_a), .RnW(m_rnw), .clk, .cen_E, .cen_Q,
       .BS(), .BA(), .nIRQ(m_irqn), .nFIRQ(m_firqn), .nNMI(m_nmin), .AVMA(), .BUSY(), .LIC(),
-      .nHALT(1'b1), .nRESET(rst_n), .nDMABREQ(1'b1), .OP(m_op), .RegData());
+      .nHALT(1'b1), .nRESET(crst_n), .nDMABREQ(1'b1), .OP(m_op), .RegData());
   mc6809i u_sub (
       .D(s_di), .DOut(s_do), .ADDR(s_a), .RnW(s_rnw), .clk, .cen_E, .cen_Q,
       .BS(), .BA(), .nIRQ(s_irqn), .nFIRQ(s_firqn), .nNMI(1'b1), .AVMA(), .BUSY(), .LIC(),
-      .nHALT(1'b1), .nRESET(rst_n && lm && !s_hold), .nDMABREQ(1'b1), .OP(s_op), .RegData());
+      .nHALT(1'b1), .nRESET(crst_n && lm && !s_hold), .nDMABREQ(1'b1), .OP(s_op), .RegData());
   /* verilator lint_on PINCONNECTEMPTY */
 
   // ================================================================ decode
@@ -287,7 +314,7 @@ module d8_sys #(
   logic       m_rom_have, s_rom_have;
   logic [15:0] prom_late;
   always_ff @(posedge clk) begin
-    if (!rst_n) begin
+    if (!crst_n) begin
       o_prom_req <= 1'b0; o_srom_req <= 1'b0; prom_late <= '0;
       m_rom_have <= 1'b0; s_rom_have <= 1'b0;
     end else begin
@@ -392,7 +419,7 @@ module d8_sys #(
   // pipeline of the read: slot -> +3 latch
   logic [2:0] rd_pipe_m, rd_pipe_s;
   always_ff @(posedge clk) begin
-    if (!rst_n) begin
+    if (!crst_n) begin
       rd_pipe_m <= '0; rd_pipe_s <= '0;
     end else begin
       rd_pipe_m <= {rd_pipe_m[1:0], acc_m && m_rnw && md.r != R_ROM};
@@ -435,7 +462,7 @@ module d8_sys #(
   wire coin_any = !(i_coin[5] && i_coin[6] && i_coin[7]);
 
   always_ff @(posedge clk) begin
-    if (!rst_n) begin
+    if (!crst_n) begin
       mcu_value <= '0; mcu_return <= '0;
       p0_ext <= '0; p1_ext <= '0; p0_force <= '0; mcu_p2_prev <= 8'hFF;
       m_irq <= 1'b0; m_firq <= 1'b0; s_irq <= 1'b0; s_firq <= 1'b0;
@@ -601,8 +628,11 @@ module d8_sys #(
 
   // ================================================================ interrupts
   // MAME screen vblank: true from line 248 to the end of line 7
+  // vblank_l = (line >= 248 || line < 8), as a register in d8_video (M4:
+  // the comparator on the line counter was a critical path into the MCU)
   logic [8:0] vc;
-  always_comb vblank_l = vc >= 9'd248 || vc < 9'd8;
+  logic       mvbl;
+  always_comb vblank_l = mvbl;
   always_comb begin
     m_irqn  = !m_irq;
     m_firqn = !(lm && m_firq);
@@ -619,7 +649,7 @@ module d8_sys #(
   // (dec8:2132), srdarwin not connected.
   wire int0_line = lm ? int0 : go ? vblank_l : 1'b0;
   d8_mcu u_mcu (
-      .clk, .rst_n(rst_n && has_mcu), .cen(mcu_cen && has_mcu),
+      .clk, .rst_n(crst_n && has_mcu), .cen(mcu_cen && has_mcu),
       .i_int0n(!int0_line), .i_int1n(!int1),
       .i_p0(p0_ext), .i_p0_force(lm ? p0_force : 8'h00),
       .i_p1(sr ? 8'hFF : p1_ext), .i_p2(8'hFF), .i_p3(i_coin),
@@ -630,7 +660,7 @@ module d8_sys #(
   logic [15:0] xacc;
   logic        xacc_l;
   always_ff @(posedge clk) begin
-    if (!rst_n) begin xacc <= '0; xacc_l <= 1'b0; end
+    if (!crst_n) begin xacc <= '0; xacc_l <= 1'b0; end
     else begin
       xacc_l <= mcu_xacc;
       if (mcu_xacc && !xacc_l && xacc != 16'hFFFF) xacc <= xacc + 16'd1;
@@ -643,14 +673,14 @@ module d8_sys #(
   /* verilator lint_off PINCONNECTEMPTY */
   // ================================================================ sound (M3)
   d8_snd u_snd (
-    .clk(clk), .rst_n(rst_n), .i_pause(i_pause), .i_machine(i_machine),
+    .clk(clk), .rst_n(crst_n), .i_pause(i_pause), .i_machine(i_machine),
     .i_latch_wr(o_snd_wr), .i_latch_d(o_snd_data),
     .i_rom_we(i_snd_we), .i_rom_addr(i_snd_addr), .i_rom_din(i_snd_din),
     .o_fm(o_fm), .o_ssg(o_ssg), .o_opl(o_opl), .o_mix(o_audio),
     .o_dbg_unmapped(o_dbg_snd_unmapped), .o_dbg_rom_writes());
 
-  d8_video #(.LATCH(LATCH), .KRN_FLIP(KRN_FLIP)) u_video (
-      .clk, .rst_n, .ce_pix, .i_machine,
+  d8_video #(.LATCH(LATCH), .KRN_FLIP(KRN_FLIP), .FREE_TIMING(FREE_TIMING)) u_video (
+      .clk, .rst_n(crst_n), .i_tim_rst(tim_rst), .o_tim_evt(tim_evt), .ce_pix, .i_machine,
       .i_cpu_addr(v_addr), .i_cpu_din(v_din),
       .i_pal_we(v_pal_we), .i_palx_we(v_palx_we), .i_fix_we(v_fix_we), .i_bg_we(v_bg_we),
       .i_spr_we(v_spr_we), .i_spr_copy(v_spr_copy), .i_scr_we(v_scr_we), .i_scr_sel(v_scr_sel),
@@ -658,7 +688,7 @@ module d8_sys #(
       .o_pal_dout(v_pal_q), .o_palx_dout(v_palx_q), .o_fix_dout(v_fix_q), .o_bg_dout(v_bg_q),
       .o_spr_dout(v_spr_q),
       .o_rom_req, .o_rom_addr, .i_rom_gnt, .i_rom_rv, .i_rom_data,
-      .o_r, .o_g, .o_b, .o_de, .o_hblank, .o_vblank, .o_hs, .o_vs, .o_vbl, .o_vcnt(vc),
+      .o_r, .o_g, .o_b, .o_de, .o_hblank, .o_vblank, .o_hs, .o_vs, .o_vbl, .o_vcnt(vc), .o_mvbl(mvbl),
       .o_busy(), .o_hold(),
       .o_dbg_overruns, .o_dbg_maxcyc, .o_dbg_err(o_dbg_verr), .o_dbg_pen(o_pen));
   /* verilator lint_on PINCONNECTEMPTY */

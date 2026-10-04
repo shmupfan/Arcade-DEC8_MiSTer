@@ -39,10 +39,15 @@
 module d8_video #(
     parameter bit LATCH      = 1'b0,
     parameter int LATCH_LINE = 6,
-    parameter bit KRN_FLIP   = 1'b0
+    parameter bit KRN_FLIP   = 1'b0,
+    // 1: the raster counters run from i_tim_rst (power-on) and keep sync
+    // while the core is in reset (black picture); see d8_sys
+    parameter bit FREE_TIMING = 1'b0
 ) (
     input  logic        clk,
     input  logic        rst_n,
+    input  logic        i_tim_rst,       // FREE_TIMING: synchronous raster reload
+    output logic        o_tim_evt,       // FREE_TIMING: this pixel enable starts line 248
     input  logic        ce_pix,          // 6 MHz: exactly one clock in 16
     input  logic [1:0]  i_machine,       // 0 lastmisn, 1 gondo, 2 srdarwin
 
@@ -82,6 +87,7 @@ module d8_video #(
     output logic        o_vs,
     output logic        o_vbl,           // one clk at the start of line 248 (NMI, MCU INT0)
     output logic [8:0]  o_vcnt,          // current line (M2: MAME's vblank = lines 248-271, 0-7)
+    output logic        o_mvbl,          // MAME's vblank (lines 248-271, 0-7), registered (M4 timing)
     output logic        o_busy,          // a snapshot engine is running
     output logic        o_hold,          // a CPU write is held by a snapshot engine
 
@@ -109,14 +115,20 @@ module d8_video #(
   logic [8:0] hcnt /* verilator public_flat_rd */;
   logic [8:0] vcnt /* verilator public_flat_rd */;
   // power-on phase as MAME: the screen starts at the first vblank line
+  wire tim_rst = FREE_TIMING ? i_tim_rst : !rst_n;
+  assign o_tim_evt = ce_pix && hcnt == 9'(H_TOTAL - 1) && vcnt == 9'(V_VBL - 1);
   always_ff @(posedge clk) begin
-    if (!rst_n) begin
+    if (tim_rst) begin
       hcnt <= '0;
       vcnt <= 9'(V_VBL);
+      o_mvbl <= 1'b1;
     end else if (ce_pix) begin
       if (hcnt == 9'(H_TOTAL - 1)) begin
         hcnt <= '0;
         vcnt <= (vcnt == 9'(V_TOTAL - 1)) ? 9'd0 : vcnt + 9'd1;
+        // the same as (new vcnt >= 248 || new vcnt < 8), one register
+        if (vcnt == 9'(V_VBL - 1)) o_mvbl <= 1'b1;
+        else if (vcnt == 9'(V_VIS0 - 1)) o_mvbl <= 1'b0;
       end else hcnt <= hcnt + 9'd1;
     end
   end
@@ -653,8 +665,11 @@ module d8_video #(
     wt = (v[0] ? 8'h0e : 8'h00) + (v[1] ? 8'h1f : 8'h00) + (v[2] ? 8'h43 : 8'h00) + (v[3] ? 8'h8f : 8'h00);
   endfunction
 
+  // FREE_TIMING: sync and blanking run from the raster whatever the core
+  // reset; the picture is black while the core is held in reset
+  wire out_rst = FREE_TIMING ? tim_rst : !rst_n;
   always_ff @(posedge clk) begin
-    if (!rst_n) begin
+    if (out_rst) begin
       o_de <= 1'b0;
       o_hblank <= 1'b1;
       o_vblank <= 1'b1;
@@ -666,9 +681,9 @@ module d8_video #(
       o_vblank <= vcnt < 9'(V_VIS0) || vcnt > 9'(V_VIS1);
       o_hs     <= hcnt >= 9'(HS_START) && hcnt < 9'(HS_END);
       o_vs     <= vcnt >= 9'(VS_START) && vcnt < 9'(VS_START + 3);
-      o_r <= wt(col[3:0]);
-      o_g <= wt(col[7:4]);
-      o_b <= wt(col[11:8]);
+      o_r <= (rst_n || !FREE_TIMING) ? wt(col[3:0])  : 8'd0;
+      o_g <= (rst_n || !FREE_TIMING) ? wt(col[7:4])  : 8'd0;
+      o_b <= (rst_n || !FREE_TIMING) ? wt(col[11:8]) : 8'd0;
       o_dbg_pen <= ma;
     end
   end

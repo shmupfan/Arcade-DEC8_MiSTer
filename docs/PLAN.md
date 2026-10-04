@@ -57,7 +57,7 @@ srdarwin) are the accuracy references.
 | M1 | video RTL for the three machines | RTL pixel-exact against MAME on every M0 frame; mid-scan writes rendered live and every differing frame classified; synthetic scenes against the renderer; line budget with a pessimistic ROM model (DONE, docs/m1_findings.md) |
 | M2 | full system: 6809 x2 / 6309-as-6809 / 6809, i8751, memory maps, interrupts, MCU protocol, inputs, DIPs | boots from power-on match MAME's I/O streams, images and RAM; divergences root-caused (DONE, docs/m2_findings.md) |
 | M3 | sound: 6502/R65C02/DECO 222, YM2203, YM3526/YM3812, latches and NMIs | register streams and level against MAME WAVs (DONE, docs/m3_findings.md; R17-R20 open) |
-| M4 | MiSTer shell, SDRAM, MRAs (DIPs from the driver, machine byte, srdarwinb sprite byte swap done by the MRA interleave), rotary input for Gondomania, Quartus timing at 96 MHz | board sim equals M2; timing closed; first RBF on hardware |
+| M4 | MiSTer shell, SDRAM, MRAs (DIPs from the driver, machine byte; srdarwinb's sprite byte swap done by a sprite word address swap in the board, docs/m4_findings.md 2), rotary input for Gondomania, Quartus timing at 96 MHz | board sim equals M2; timing closed; first RBF built (docs/m4_findings.md); on hardware in M5 |
 | M5 | hardware QA, release to the shmupfan database | |
 
 Lessons carried from the other cores: register every SDRAM request address
@@ -90,7 +90,8 @@ shell edge case to test (1945k III known issue 9.1).
   validate it (R7).
 - 5.5 Gondomania rotary joystick (Lee, 2026-10-03): support both a
   spinner/paddle input and a button mapping (rotate left/right) for the
-  12-position rotary; M4 shell work.
+  12-position rotary; M4 shell work. DONE (M4): buttons, spinner and
+  paddle all active at once (rtl/d8_rotary.sv, docs/m4_findings.md 4).
 
 ## 6. Research items
 

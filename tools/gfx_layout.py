@@ -64,44 +64,51 @@ def region(setname, tag, size):
 
 
 def words(lanes):
-    """[n, 4] uint8 lanes -> bytes, lane 0 first (bits 31-24)."""
-    return np.ascontiguousarray(np.stack(lanes, axis=1).astype(np.uint8)).tobytes()
+    """[n] arrays per lane -> one array, 4 entries per word, lane 0 first
+    (bits 31-24). Keeps the dtype (bytes here, byte provenance codes in
+    tools/make_mra.py)."""
+    return np.ascontiguousarray(np.stack(lanes, axis=1)).ravel()
 
 
-def build(setname):
-    man = json.loads((REGIONS / setname / "manifest.json").read_text())
-    machine = man["machine"]
-    out = bytearray(SIZE)
-    z = None
+def layout(machine, get, fill):
+    """The graphics block as an array of SIZE entries. get(tag, size) gives
+    a region's entries (padded to size); fill is the entry for unused
+    bytes (zero bytes)."""
+    out = np.full(SIZE, fill, dtype=np.asarray(fill).dtype)
+
+    def put(key, blk):
+        out[BASE[key]:BASE[key] + len(blk)] = blk
+
     if machine in ("lastmisn", "gondo"):
         for key, tag in (("bg", "tiles1"), ("spr", "sprites")):
-            r = region(setname, tag, 0x80000)
-            p = [r[n * 0x20000:(n + 1) * 0x20000] for n in range(4)]
-            blk = words(p)
-            out[BASE[key]:BASE[key] + len(blk)] = blk
-        c = region(setname, "char", 0x8000)
-        z = np.zeros(0x2000, dtype=np.uint8)
-        blk = words([c[0x2000:0x4000], c[0x4000:0x6000], c[0x6000:0x8000], z])
-        out[BASE["fix"]:BASE["fix"] + len(blk)] = blk
+            r = get(tag, 0x80000)
+            put(key, words([r[n * 0x20000:(n + 1) * 0x20000] for n in range(4)]))
+        c = get("char", 0x8000)
+        z = np.full(0x2000, fill, dtype=out.dtype)
+        put("fix", words([c[0x2000:0x4000], c[0x4000:0x6000], c[0x6000:0x8000], z]))
     else:
-        t = region(setname, "tiles1", 0x40000)
+        t = get("tiles1", 0x40000)
         parts = []
         for k in range(4):
             b = 0x10000 * k
             parts.append(words([t[b + 0x8000:b + 0xa000], t[b:b + 0x2000],
                                 t[b + 0xa000:b + 0xc000], t[b + 0x2000:b + 0x4000]]))
-        blk = b"".join(parts)
-        out[BASE["bg"]:BASE["bg"] + len(blk)] = blk
-        s = region(setname, "sprites", 0x30000)
-        z = np.zeros(0x10000, dtype=np.uint8)
-        blk = words([s[0:0x10000], s[0x20000:0x30000], s[0x10000:0x20000], z])
-        out[BASE["spr"]:BASE["spr"] + len(blk)] = blk
-        c = region(setname, "char", 0x8000)
-        z = np.zeros(0x2000, dtype=np.uint8)
-        blk = words([c[0x2000:0x4000], c[0:0x2000], z, z])
-        out[BASE["fix"]:BASE["fix"] + len(blk)] = blk
-    (REGIONS / setname / "gfx.bin").write_bytes(bytes(out))
-    return machine, bytes(out)
+        put("bg", np.concatenate(parts))
+        s = get("sprites", 0x30000)
+        z = np.full(0x10000, fill, dtype=out.dtype)
+        put("spr", words([s[0:0x10000], s[0x20000:0x30000], s[0x10000:0x20000], z]))
+        c = get("char", 0x8000)
+        z = np.full(0x2000, fill, dtype=out.dtype)
+        put("fix", words([c[0x2000:0x4000], c[0:0x2000], z, z]))
+    return out
+
+
+def build(setname):
+    man = json.loads((REGIONS / setname / "manifest.json").read_text())
+    machine = man["machine"]
+    out = layout(machine, lambda tag, size: region(setname, tag, size), np.uint8(0)).tobytes()
+    (REGIONS / setname / "gfx.bin").write_bytes(out)
+    return machine, out
 
 
 def decode_word(w, fmt):

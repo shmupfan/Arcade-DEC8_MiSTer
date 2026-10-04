@@ -8,3 +8,13 @@ sim/runs.txt
 sim/jt12.raw
 sim/jtopl.raw
 sim/opl_wr.log
+*.rbf
+sim/m3/cputest/obj*/
+sim/m3/cputest/*.log
+# Quartus (builds run on the compile PC)
+output_files/
+db/
+incremental_db/
+*.qws
+*.rpt
+*.summary

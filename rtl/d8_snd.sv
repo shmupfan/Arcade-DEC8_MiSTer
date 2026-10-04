@@ -83,10 +83,25 @@ module d8_snd #(
   // enables jt03 left reset with its envelope pipeline unfilled and output
   // a large wandering FM signal until the program happened to rewrite every
   // operator (m3_findings 3).
-  logic [3:0] c16 = '0;
-  logic [5:0] c64 = '0;
-  wire run = !i_pause;
+  // Reset is deterministic whatever its length (on the MiSTer it lasts
+  // through the ROM download; M4 found the sound board 8 clocks, then an
+  // OPL timer 192 clocks, apart between the board and the M2 harness,
+  // m4_findings 6): the dividers and the chip enables run for the first
+  // 37,464 clocks of a reset and then stop until the release. 37,464 is the
+  // reset length of the M2/M3 harness (m2/tb_sys.cpp), so the sound board
+  // leaves reset in exactly the state the M3 results (compared with MAME)
+  // were measured from: 585 YM2203 and 1,170 OPL enables, enough to fill the
+  // chips' pipelines, and the same free-running prescaler phase (the OPL
+  // timer base).
+  localparam logic [15:0] RST_RUN = 16'd37464;
+  logic [3:0]  c16 = '0;
+  logic [5:0]  c64 = '0;
+  logic [15:0] rcnt = '0;                  // clocks into the current reset
+  wire rst_hold = !rst_n && rcnt == RST_RUN;
+  wire run = !i_pause && !rst_hold;
   always_ff @(posedge clk) begin
+    if (rst_n) rcnt <= '0;
+    else if (rcnt != RST_RUN) rcnt <= rcnt + 16'd1;
     if (run) begin
       c16 <= c16 + 4'd1;
       c64 <= c64 + 6'd1;
@@ -216,11 +231,18 @@ module d8_snd #(
   assign o_fm  = fm_g;
   assign o_ssg = ym_ssg;
   assign o_opl = opl_snd;
+  // The three products are registered (M4 timing: the whole mix in one
+  // clock missed 96 MHz by 1.9 ns), so o_mix follows the chips one clock
+  // (10 ns) later than in M3.
+  logic signed [31:0] p_fm, p_ssg, p_opl;
+  always_ff @(posedge clk) begin
+    p_fm  <= 32'(fm_g) * $signed(32'(FM_GAIN));
+    p_ssg <= $signed(32'({1'b0, ym_ssg})) * $signed(32'(SSG_GAIN));
+    p_opl <= 32'(opl_snd) * $signed(32'(go ? OPL_GAIN_GO : OPL_GAIN));
+  end
   always_comb begin
     logic signed [31:0] m;
-    m = (32'(fm_g) * $signed(32'(FM_GAIN)) +
-         $signed(32'({1'b0, ym_ssg})) * $signed(32'(SSG_GAIN)) +
-         32'(opl_snd) * $signed(32'(go ? OPL_GAIN_GO : OPL_GAIN))) >>> 8;
+    m = (p_fm + p_ssg + p_opl) >>> 8;
     o_mix = (m > 32'sd32767) ? 16'sh7FFF : (m < -32'sd32768) ? 16'sh8000 : m[15:0];
   end
 
