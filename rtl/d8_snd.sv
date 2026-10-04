@@ -36,12 +36,17 @@
 // (every 32). Pause holds every enable.
 
 module d8_snd #(
-    // mix gains in 1/256 (m3_findings: FM and SSG from MAME's routes,
-    // dec8:2033-2040; the OPL gain fitted against MAME's WAV)
-    parameter int FM_GAIN   = 102,     // 0.40
+    // mix gains in 1/256 (m3_findings 4.1, R20). FM and OPL: 1:1, as both
+    // boards sum two identical YM3014 DAC outputs through equal 10 kOhm
+    // resistors (Last Mission sch. sheet 27, Gondomania sheet 28); jt03 and
+    // jtopl both deliver the chip's 16-bit DAC word (14-bit operators into
+    // a saturating 16-bit accumulator), so equal gains give the board's
+    // balance. MAME weights the OPL 2x (1.25x on gondo) with no source.
+    // SSG: MAME's route (its level against the DACs is not settled).
+    parameter int FM_GAIN   = 102,     // 0.40 (MAME's FM route)
     parameter int SSG_GAIN  = 2775,    // 0.20 per channel on jt49's sum
-    parameter int OPL_GAIN  = 205,     // 0.80 (lastmisn, srdarwin)
-    parameter int OPL_GAIN_GO = 128    // 0.50 (gondo, dec8:2157)
+    parameter int OPL_GAIN  = 102,     // = FM_GAIN (schematics; MAME 0.80)
+    parameter int OPL_GAIN_GO = 102    // = FM_GAIN (schematics; MAME 0.50)
 ) (
     input  logic        clk,
     input  logic        rst_n,

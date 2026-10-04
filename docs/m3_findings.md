@@ -210,3 +210,89 @@ New:
 HDL: jt65c02, jt03, jtopl (`rtl/vendor/*/PROVENANCE.md`). Where a document
 and MAME disagree the document is preferred as evidence; where the
 evidence is incomplete the item stays open.
+
+## 7. R17 and R20 follow-up (2026-10-04)
+
+### 7.1 R17: the sound 6502's cycle counts (fixed) and the OPL timer restart (MAME differs from the die)
+
+Cycle audit (`sim/m3/cycle_audit.py`): MAME debugger trace and the core's
+opcode-fetch trace (`+snd=... +sndtrace=F0:F1:file`; `+snd` must come
+first, Verilator plusargs prefix-match) over lastmisn frames 739-742,
+every instruction checked against the Rockwell R65C02 data sheet
+(R65C00 family, Instruction Set Op Code Matrix, p. 1-11, R65C02-DS in
+section 6). MAME's sound CPU is an R65C02 on lastmisn and gondo
+(dec8:1992, 2109) and a DECO 222 on srdarwin (dec8:2423), 1.5 MHz.
+Stand-alone benches in `sim/m3/cputest/` (README) measure each case as
+(16 reps minus 8 reps) / 8.
+
+Two jt65c02 microcode errors, both against the data sheet, fixed
+(`rtl/vendor/jt65c02/PROVENANCE.md`, changes 2 and 3):
+
+| Case | Data sheet | Core before | Core now |
+|---|---|---|---|
+| ADC/SBC every mode, binary | imm 2, zp 3, abs 4 ... | +1 cycle | as data sheet |
+| ADC/SBC decimal (D=1) | +1 | +2 | +1 |
+| Bcc not taken | 2 | 2.25 (one extra microstep) | 2.000 |
+| Bcc taken, same page | 3 | 3 | 3 |
+
+In the key-off loop (one iteration, 276 data-sheet cycles from the data
+write to the next register write) the core now takes 277 (MAME 276,
+before 281). BCD results unchanged (bench `tb_6502.sv`).
+
+Known remaining deviations, not reached by these programs' timer paths,
+logged as R21: STA abs,X/Y crossing a page 6 (data sheet 5), RMW abs,X
+crossing a page 8 (data sheet 7), LDA (zp),Y crossing a page 5 (data
+sheet 6).
+
+OPL timer restart: the die-level YM3812 model (Nuked YM3812-LLE,
+`fmopl2.c` timer block: `t1_step` comes from the free-running LFO counter,
+the start edge only reloads the count) counts the timer on a free-running
+prescaler, as jtopl does; ymfm (MAME) restarts the period exactly at the
+write. The YM3812 data sheet gives only the ranges (timer 1 80 us to
+20.4 ms). Accurate side for the remaining IRQ timing differences: the
+core (tier 2 evidence, die-level model, against MAME).
+
+Re-run of the six runs with both changes (frames as section 1):
+
+| Run | Timer IRQs core / MAME, before | now | Event counts now | Stream note |
+|---|---|---|---|---|
+| lm_attract | 54017 / 54020 | 54020 / 54020 | every kind equal (399289) | first order swap at frame 1104 (latch write vs OPL write, 1.1 us apart) |
+| lm_play | 54234 / 54234 | 54234 / 54234 | every kind equal (390579) | order swap at frame 1237 (2.3 us apart) |
+| go_attract | 40372 / 40378 | 40381 / 40378 | Y 7236 / 7304 | R18 power-on order, then OPL prescaler phase |
+| go_play | 26160 / 26162 | 26162 / 26162 | every kind equal (188439) | R18 power-on order |
+| sr_attract | 51509 / 51679 | 51672 / 51679 | Y 76782 / 76830 | from frame 3, R19 (DECO 222 jmp (ind) CMOS 6 vs NMOS 5) |
+| sr_play | 53656 / 53669 | 53669 / 53669 | Y 23006 / 23022 | as sr_attract |
+
+The lost-IRQ mechanism of 3.2 is gone on lastmisn and go_play; the SRD
+tempo error drops from 0.33% to 0.014%. Remaining: R18 (power-on), R19
+(DECO 222 NMOS or CMOS) and the OPL prescaler phase (core matches the
+die). R17 closed for the CPU; the timer item closed in favour of the core.
+
+### 7.2 R20: FM to OPL balance set to the schematics (1:1)
+
+Second reading of both mixing networks (LM-SCH sheet 27, PDF p. 31;
+GONDO-TSM sheet 28, PDF p. 46): YM2203 FM and YM3526 each drive their own
+YM3014 serial DAC (2H and 1H), each DAC through a 3403 op-amp buffer and
+4.7 uF to an equal 10 kOhm resistor (Last Mission C6 / R4; Gondomania C6 /
+R4) into the summing node, then VR1 10 kOhm and the MB3730 amplifier.
+Agrees with 4.1. The YM3812 data sheet (p. 1: "OPLII ... interfaces with
+the dedicated DAC YM3014") and both schematics put the same DAC part on
+both chips, so equal digital words give equal analog swing, and the
+board's FM:OPL balance is 1:1. The fitted scales confirm jt03 and jtopl
+share ymfm's per-chip output units (fit FM 82-109 for gain 102; OPL
+170-213 for MAME's 0.80 route, 132-135 for 0.50), so MAME's 2x / 1.25x OPL
+weights are a mixing choice, not a scale correction.
+
+Change (`rtl/d8_snd.sv`): OPL_GAIN and OPL_GAIN_GO = FM_GAIN (102). The
+mix is now 2 to 4 dB below MAME's WAV overall (MAME's louder OPL); the
+absolute output level is set at M4 with the volume standard. SSG keeps
+MAME's route (its analog level against the DACs needs the YM2203's SSG
+output level, not in the documents). Remaining evidence that would
+confirm: a PCB audio recording, or the YM3014 data sheet. R20 closed in
+favour of the schematics.
+
+Sources added: R65C02-DS (Rockwell R65C00 family data sheet,
+`../mister-arcade-survey/datasheets/r65c02/rockwell_r65c00_microprocessors.pdf`,
+p. 1-10 Table 4, p. 1-11 op code matrix); YM3812-DS (Yamaha YM3812 data
+sheet, Japanese edition, `../mister-arcade-survey/datasheets/ym3812/YM3812_datasheet_archiveorg.pdf`);
+YM3812-LLE (github.com/nukeykt/YM3812-LLE, fmopl2.c timer block, tier 2).
