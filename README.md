@@ -1,30 +1,51 @@
-# DEC8 - MiSTer FPGA Core (draft)
+# DEC8 - MiSTer FPGA Core
 
 Three vertical shooters on Data East's 1986-87 8-bit boards, from one RBF:
-Last Mission, Gondomania and SRD: Super Real Darwin, ten MAME sets. Not
-yet released: this is the M4 build (the board simulation matches the
-system simulation, timing closed at 96 MHz, first RBF built, not yet
-tested on a MiSTer). See docs/PLAN.md and the findings documents in
-docs/.
+Last Mission, Gondomania and SRD: Super Real Darwin, ten MAME sets.
+
+<img src="docs/images/lastmisn.png" width="31%" alt="Last Mission"> <img src="docs/images/gondo.png" width="31%" alt="Gondomania"> <img src="docs/images/srdarwin.png" width="31%" alt="SRD: Super Real Darwin">
+
+*Screenshots taken on a MiSTer with this core.*
 
 | Game | Year | Main CPU | MCU | Sound |
 |---|---|---|---|---|
-| Last Mission (+ US rev 6, US rev 5, Japan) | 1986 | 2x 6809 at 1.5 MHz | i8751 | R65C02, YM2203, YM3526 |
-| Gondomania (+ US, Makyou Senshi) | 1987 | HD6309 at 3 MHz (runs 6809 code only) | i8751 | R65C02, YM2203, YM3526 |
+| Last Mission (+ US rev 6, US rev 5, Japan) | 1986 | 2x 6809 at 1.5 MHz | i8751 | 6502A, YM2203, YM3526 |
+| Gondomania (+ US, Makyou Senshi) | 1987 | HD6309 at 3 MHz (runs 6809 code only) | i8751 | 6502A, YM2203, YM3526 |
 | SRD: Super Real Darwin (+ Japan, Japan bootleg) | 1987 | 6809 at 1.5 MHz | i8751 (none on the bootleg) | DECO 222, YM2203, YM3812 |
 
-The CPUs and sound chips use established cores: mc6809i (Greg Miller),
-jt8051, jt65c02, jt03 and jtopl (Jose Tejada, jotego). The video hardware
-(tilemaps, both sprite chips, palette) is new work. Details and licences in
-docs/PLAN.md section 3 and each vendored core's PROVENANCE.md.
+The sound CPU is the 6502A named in the Last Mission and Gondomania board
+documents (MAME emulates an R65C02) and Data East's DECO 222 on SRD.
 
-## Install (when released)
+The CPUs and sound chips use established cores: mc6809i (Greg Miller),
+jt8051, jt65c02, jt03 and jtopl (Jose Tejada, jotego); see CREDITS.md. The
+video hardware (tilemaps, both sprite chips, palette) is new work.
+
+## Install
+
+### With Update All (recommended)
+
+Add these two lines to `/media/fat/downloader.ini` on your SD card:
+
+```ini
+[shmupfan]
+db_url = https://raw.githubusercontent.com/shmupfan/Distribution/main/db.json
+```
+
+Then run Update All (or `downloader`) from the Scripts menu. It installs the
+core and every MRA, including the alternative sets, and keeps them up to
+date on later runs. The same entry also brings in other
+[shmupfan](https://github.com/shmupfan/Distribution) cores as they are
+released.
+
+### Manually
 
 Copy `releases/Arcade-DEC8_*.rbf` to `/media/fat/_Arcade/cores/` and the
 MRA files in `releases/` to `/media/fat/_Arcade/`. Alternative sets are in
 `releases/_alternatives/` and go to `/media/fat/_Arcade/_alternatives/`.
 
-You need the MAME ROM sets (0.288 naming) in `/media/fat/games/mame/`:
+### ROMs
+
+You need the MAME ROM sets (0.288/0.289 naming) in `/media/fat/games/mame/`:
 `lastmisn.zip`, `gondo.zip`, `srdarwin.zip`. Clone sets load from their
 parent zip. No ROM data is included in this repository.
 
@@ -92,9 +113,16 @@ The main ones:
   three machine cycles), where MAME enters the handler at the next
   instruction. Gondomania's random numbers in gameplay and SRD's MCU timing
   differ from MAME because of it (docs/m2_findings.md).
-- **Sound CPU timing** follows the R65C02 data sheet for the instructions
-  the sound programs use (docs/m3_findings.md 7.1); FM and OPL are mixed
-  1:1 as both board schematics show.
+- **Sound CPU timing.** Two cycle-count errors in the vendored jt65c02
+  (ADC/SBC one cycle long, untaken branches 2.25 cycles) are fixed to the
+  6502 data sheets, which moved SRD's music tempo from 0.33% to 0.014% off
+  MAME. An independent second audit confirmed both fixes and the
+  unchanged arithmetic (docs/jt65c02_cycle_audit.md), and found the
+  remaining differences listed under Known issues.
+- **Sound mix.** The music chip (YM3526 / YM3812) and the effects chip
+  (YM2203 FM) are mixed 1:1, as both board schematics wire them (equal
+  10 kOhm resistors after identical YM3014 DACs). MAME plays the music
+  chip at twice that level. See Known issues.
 - **Mid-screen writes** (palette, tiles, scroll) are drawn as the beam
   meets them; MAME draws each frame at once.
 - **Gondomania's main CPU** runs at 3 MHz as in MAME. The board's schematic
@@ -110,6 +138,24 @@ The main ones:
   give 40k, 90k and every 90k, as MAME lists it. No SRD manual was
   available.
 
+## Known issues
+
+- **Music level (R20).** The 1:1 mix follows the schematics, which give
+  the wiring but not each chip's output level. On a MiSTer the music
+  sounds quiet against the effects. I am measuring the balance from
+  real-board recordings of SRD; the next update will set it from that
+  evidence.
+- **Sound CPU cycle counts (R19, R21).** Three groups of instructions
+  still differ from the data sheets by one cycle: indexed loads, stores
+  and read-modify-write instructions across a page, a taken branch across
+  a page (3 cycles, data sheets 4), and JMP (ind) (6 cycles, 5 on the
+  NMOS 6502A the boards use). They occur in the sound programs; their
+  effect on timing is not measured yet (docs/jt65c02_cycle_audit.md).
+- **Last Mission** has no Flip Screen DIP switch, so on a CRT mounted for
+  the other rotation it cannot be turned.
+- No high-score saving yet. One Last Mission attract frame differs from
+  the system simulation in 32 pixels of the text layer (R22).
+
 ## Building and verifying
 
 - Simulation: Verilator 5.x and Python 3; the MAME reference captures need
@@ -121,7 +167,7 @@ The main ones:
 ## License and credits
 
 GPL-3.0-or-later for the combined work. Vendored components keep their own
-licences and headers. The core relies on MAME's DEC8 driver (copyright
-holders Bryan McPhail and Stephane Humbert).
+licences and headers. See `LICENSE` and `CREDITS.md`. The core relies on
+MAME's DEC8 driver by Bryan McPhail and Stephane Humbert.
 
 Development used Anthropic's Claude as a coding tool.
