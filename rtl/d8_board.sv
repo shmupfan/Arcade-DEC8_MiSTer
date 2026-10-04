@@ -134,9 +134,9 @@ module d8_board #(
   logic        prom_req, prom_ok, srom_req, srom_ok;
   logic [20:0] prom_addr, srom_addr;
   logic [7:0]  prom_data, srom_data;
-  logic        rom_req, rom_gnt, rom_rv;
-  logic [21:0] rom_addr, gfx_addr;
-  logic [31:0] rom_data;
+  logic        rom_req /* verilator public_flat_rd */, rom_gnt /* verilator public_flat_rd */, rom_rv /* verilator public_flat_rd */;
+  logic [21:0] rom_addr /* verilator public_flat_rd */, gfx_addr;
+  logic [31:0] rom_data /* verilator public_flat_rd */;
 
   // srdarwinb: sprite word address bits 0 and 1 swapped (byte address bits
   // 2 and 3) in the sprite block 0x080000-0x0FFFFF

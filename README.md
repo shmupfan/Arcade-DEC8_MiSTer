@@ -2,8 +2,9 @@
 
 Three vertical shooters on Data East's 1986-87 8-bit boards, from one RBF:
 Last Mission, Gondomania and SRD: Super Real Darwin, ten MAME sets. Not
-yet released: this is the M4 build (simulation verified, first RBF built,
-not yet tested on a MiSTer). See docs/PLAN.md and the findings documents in
+yet released: this is the M4 build (the board simulation matches the
+system simulation, timing closed at 96 MHz, first RBF built, not yet
+tested on a MiSTer). See docs/PLAN.md and the findings documents in
 docs/.
 
 | Game | Year | Main CPU | MCU | Sound |

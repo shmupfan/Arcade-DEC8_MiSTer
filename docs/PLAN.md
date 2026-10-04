@@ -57,7 +57,7 @@ srdarwin) are the accuracy references.
 | M1 | video RTL for the three machines | RTL pixel-exact against MAME on every M0 frame; mid-scan writes rendered live and every differing frame classified; synthetic scenes against the renderer; line budget with a pessimistic ROM model (DONE, docs/m1_findings.md) |
 | M2 | full system: 6809 x2 / 6309-as-6809 / 6809, i8751, memory maps, interrupts, MCU protocol, inputs, DIPs | boots from power-on match MAME's I/O streams, images and RAM; divergences root-caused (DONE, docs/m2_findings.md) |
 | M3 | sound: 6502/R65C02/DECO 222, YM2203, YM3526/YM3812, latches and NMIs | register streams and level against MAME WAVs (DONE, docs/m3_findings.md; R17-R20 open) |
-| M4 | MiSTer shell, SDRAM, MRAs (DIPs from the driver, machine byte; srdarwinb's sprite byte swap done by a sprite word address swap in the board, docs/m4_findings.md 2), rotary input for Gondomania, Quartus timing at 96 MHz | board sim equals M2; timing closed; first RBF built (docs/m4_findings.md); on hardware in M5 |
+| M4 | MiSTer shell, SDRAM, MRAs (DIPs from the driver, machine byte; srdarwinb's sprite byte swap done by a sprite word address swap in the board, docs/m4_findings.md 2), rotary input for Gondomania, Quartus timing at 96 MHz | board sim equals M2 (all but 32 pixels of one frame, R22); timing closed; first RBF built (DONE, docs/m4_findings.md); on hardware in M5 |
 | M5 | hardware QA, release to the shmupfan database | |
 
 Lessons carried from the other cores: register every SDRAM request address
@@ -118,3 +118,4 @@ shell edge case to test (1945k III known issue 9.1).
 | R19 | DECO 222: NMOS (MAME) or CMOS (jt65c02) timing; SRD uses jmp (ind), 5 cycles NMOS, 6 CMOS (m3_findings 3.3) | a DECO 222 cycle measurement |
 | R20 | Mix: FM:OPL set 1:1 per both schematics (equal 10 kOhm from identical YM3014 DACs), second reading agrees. CLOSED 2026-10-04 (m3_findings 7.2); SSG level against the DACs stays MAME's | a PCB audio recording would confirm |
 | R21 | jt65c02 page-crossing cycle counts: STA abs,X/Y 6 (data sheet 5), RMW abs,X 8 (7), LDA (zp),Y 5 (6); not reached in the sound programs' timer paths (rtl/vendor/jt65c02/PROVENANCE.md) | fix with a full M2/M3 regression |
+| R22 | d8_video reads tile codes ahead of the beam on a schedule set by its graphics fetches, so a CPU write racing the beam can land on either side of the read depending on the ROM latency: the M4 board run and the M2 harness differ in 32 pixels of one frame (lastmisn displayed frame 180, m4_findings 6) | PCB footage of the fix-layer clear in Last Mission's attract; or read tile codes at fixed slots per line so the result no longer depends on the SDRAM |

@@ -66,7 +66,8 @@ the window after a CPU landing). Changes:
 
 Latency budget (d8_sys latches the byte until falling E; m2_findings 2.2):
 28 clocks at 3 MHz (Gondomania), 60 at 1.5 MHz. Measured in the board
-runs (section 6): RESULTS.
+runs (section 6): main CPU at most 10 clocks, Last Mission's sub CPU at
+most 32, no late program byte (o_dbg_prom_late 0), no forced refresh.
 
 ## 4. Shell (Arcade-DEC8.sv)
 
@@ -98,8 +99,8 @@ runs (section 6): RESULTS.
 - Black picture with running sync during download and reset (d8_sys
   FREE_TIMING=1, as 1945k III): the raster runs from the PLL lock; the core
   is released on the raster's power-on phase (line 248, pixel 0), so its
-  first clock sees the state a reset release gives in M2. Board runs print
-  the pre-run video: RESULTS.
+  first clock sees the state a reset release gives in M2. Every board run
+  shows 7 vsyncs and 430,080 active pixels during the download, all black.
 - Audio: d8_snd's mix times 38/16 (Last Mission), 40/16 (Gondomania),
   27/16 (SRD), then the OSD volume (Normal, +6, -6, -12 dB), saturated.
   From the M3 runs (mix channel, 1 s RMS median / peak sample): Last
@@ -148,11 +149,109 @@ images):
 
 ## 6. Board gate
 
-RESULTS
+`make -f m4.mk m4-ref m4-boot m4-compare`. Seven runs, each on both
+harnesses: the M2 harness rebuilt from the M4 RTL (d8_sys FREE_TIMING=0,
+C++ ROM models) and the board harness (machine byte, the MRA's stream and
+the DIP bytes through d8_board's ioctl port, d8_sdram, the cycle-checked
+SDRAM model; both 6809 program ROMs and all graphics from SDRAM). Inputs
+from the MAME oracle; captures at frames 1-60 and every 20th frame.
+
+| Run | Frames | Capture files | io / ints / sound log |
+|---|---|---|---|
+| lm_attract | 1200 | 1401 of 1402 identical | identical |
+| lm_play | 1500 | 1581 of 1582 identical | identical |
+| go_attract | 1200 | 1402 identical | identical |
+| go_play | 1200 | 1402 identical | identical |
+| sr_attract | 1200 | 1402 identical | identical |
+| sr_play | 1200 | 1402 identical | identical |
+| clone_srdarwinb | 900 | 1222 identical | identical |
+
+io.txt carries the beam position of every logged CPU write, ints.txt the
+interrupt vector reads per frame, sndlog.csv every sound latch, chip and
+vector access with its time: all identical, so the CPUs, MCU and sound
+board run clock for clock as in M2. Work RAM, MCU RAM, sound RAM, palette,
+tile and sprite RAM are identical at every capture. srdarwinb's sprites
+come out right through the board's address swap.
+
+The one difference, the same in both Last Mission runs: displayed frame
+180, 32 pixels (one 8-pixel fix-layer row on screen lines 74, 81, 102 and
+109). The program is clearing the fix layer while the beam passes (writes
+to 0x2266, 0x22a6, 0x22e6... at raster lines 69, 78, 88, 97, 106, each the
+first lines of the character row being written), and d8_video reads the
+fix tile codes ahead of the beam on a schedule set by its graphics fetches,
+which wait on the ROM. With the M2 model (fixed 9-clock latency) the
+renderer read the old character, with the SDRAM the new one. Every
+graphics word the SDRAM returned in that frame was checked against
+gfx.bin (15,834 words, all correct). This is the live rendering of
+decision 5.2 meeting a latency-dependent read time; it is research item
+R22. Gate counters on the board: 0 renderer overruns, worst line 987 of
+6,144 clocks, 0 video errors, 0 late program reads.
+
+Audio: o_audio is checked every clock against d8_sys's mix times the
+machine's gain, saturated: 0 mismatches, 0 saturated clocks, loudest
+sample 31,951 (SRD attract). (The first gate pass counted 6,848
+mismatches on the non-Last-Mission runs: the harness switched its
+expected gain after the download, the board when the machine byte
+arrives; harness fixed.)
+
+### 6.1 Reset-length independence (d8_snd)
+
+The first canary differed from M2 only in sound timing: the sound board's
+dividers and chip enables run through reset (m3_findings 3), so the state
+at release depended on how long reset lasted (37,464 clocks in the M2
+harness, the whole ROM download on the board). Now the dividers and enables
+run for the first 37,464 clocks of a reset and then stop until the release:
+the board leaves reset in exactly the state of the M2/M3 harness. Check:
+the new reference runs equal the M3 runs (sim/build/m3) at every
+common capture (142-178 files per run, frames 100-1200) and in the sound
+log, byte for byte, for all six M3 runs.
+
+### 6.2 Other RTL changes in M4 (behaviour-neutral, same check)
+
+- d8_video: o_mvbl, MAME's vblank (lines 248-271, 0-7) as a register
+  updated with the line counter, replacing a comparator on the counter in
+  d8_sys (a critical path into the MCU's INT0).
+- d8_snd: the mix's three products registered (the audio is one clock
+  later; not in the compared files).
+- d8_sys / d8_video: FREE_TIMING parameter (default 0 = M1-M3 behaviour).
 
 ## 7. Timing closure
 
-RESULTS
+Three compiles. Compile 1 (no multicycles): 96 MHz setup slack -15.0 ns,
+TNS -10,308 (jt8051 25 ns paths, mc6809i 20 ns, jt65c02, sound mix,
+d8_sdram sub path, line counter into the MCU). Compile 2 (multicycles of
+Arcade-DEC8.sdc, registered vblank, sub request registered, the SDRAM
+word mapping without adders): -1.87 ns, only the sound mix into the
+board. Compile 3 (mix products registered): every clock meets timing.
+
+| Clock | Setup slack |
+|---|---|
+| 96 MHz system | +0.782 ns |
+| 48 MHz video | +3.359 ns |
+| HDMI | +0.277 ns |
+
+No negative setup, hold, recovery or removal slack in the summary
+(builds/20261004_0300_Arcade-DEC8.sta.summary). RBF:
+builds/20261004_0300_Arcade-DEC8.rbf, md5 70ef132767ae6777700205213261b2e2.
+
+Multicycles (Arcade-DEC8.sdc) and the endpoints that rely on them (TimeQuest
+listing of paths over 10 ns from each core, compile 3):
+- mc6809i, 2 clocks to the rest of the board, 4 inside: endpoints are the
+  bus-cycle registers loaded at the access slots (bank, IRQ/FIRQ flags,
+  MCU and sound latches, video and work RAMs, scroll and flip registers,
+  the sprite snapshot engine's hold registers), the read pipeline and
+  o_prom_req / o_srom_req (loaded at phase 1, 2 clocks after cen_E). All
+  are loaded only at a slot or phase that is at least 2 clocks after cen_E.
+- jt8051, 4 clocks: endpoints are jt8051's own registers (all enabled by
+  cen; uaddr and irq state included), its RAM, and d8_sys's port glue
+  (mcu_return, p0/p1 latches, int0/int1, FIRQ/IRQ) loaded on an SFR write,
+  which includes cen. Longest path 29.8 ns of 41.6.
+- jt65c02, 4 clocks: its registers (uaddr and jsr_ret enabled by
+  cen && !halt), the sound RAM/ROM address registers (read at the next
+  enable), the latch-pending flag (cleared on cpu_cen), opl_sel and the
+  YM2203 / OPL register files (written by the write event). Longest 18.3 ns.
+- jt03 and jtopl, 2 clocks inside each chip: endpoints in the phase
+  generators, operators and accumulators, all enabled by the chip's enable.
 
 ## 8. Compile PC
 
@@ -163,6 +262,11 @@ a time (tasklist checked for quartus before each run). Timing reports were
 taken with a second task, d8sta (quartus_sta -t), never as an ssh child.
 
 ## 9. Open items
+
+- R22: d8_video's tilemap reads follow its graphics fetches, so a write
+  racing the beam can land on either side of the read depending on the
+  ROM latency (section 6). Fix if wanted: read the tile codes at fixed
+  slots per line.
 
 - Hardware test on a MiSTer (M5): rotary direction and feel, Rotate and
   Scale, the black screen during download, volume.

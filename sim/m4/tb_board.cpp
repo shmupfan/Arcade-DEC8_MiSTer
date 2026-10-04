@@ -321,6 +321,7 @@ int main(int argc, char **argv) {
         vphase = 0;
         top->i_ioctl_download = 1;
         send(1, 0, (uint8_t)(s2.machine | (s2.srdb ? 4 : 0)));
+        cur_gain = gain_of(s2.machine);        // the board's gain follows the machine byte
         top->i_ioctl_download = 0;
         for (int i = 0; i < 64; i++) tick();
         top->i_ioctl_download = 1;
@@ -332,7 +333,6 @@ int main(int argc, char **argv) {
         send(254, 1, d1);
         top->i_ioctl_download = 0;
         for (int i = 0; i < 64; i++) tick();
-        cur_gain = gain_of(s2.machine);
         printf("download: %s machine %d srdb %d, %zu bytes in %llu clocks\n", setn.c_str(), s2.machine, s2.srdb,
                im.size(), (unsigned long long)(cycles - t));
         fflush(stdout);
@@ -356,6 +356,13 @@ int main(int argc, char **argv) {
     }
     download(stream, si, ports[5], ports[6]);
     const uint64_t t0 = cycles;
+    long gfx_f = -1;
+    char gfx_file[512] = {0};
+    {
+        std::string gs = plus("gfxlog", "");
+        if (!gs.empty()) sscanf(gs.c_str(), "%ld:%511s", &gfx_f, gfx_file);
+    }
+    FILE *fgfx = gfx_file[0] ? fopen(gfx_file, "w") : nullptr;
 
     auto *r = top->rootp;
     const int mach = si.machine;
@@ -440,6 +447,13 @@ int main(int argc, char **argv) {
             }
         }
         bool ce = top->o_ce_pix;
+        if (fgfx && frame == gfx_f) {          // +gfxlog=F:FILE graphics port trace of displayed frame F
+            auto *B = r;
+            if (B->tb_board__DOT__u_board__DOT__rom_req && B->tb_board__DOT__u_board__DOT__rom_gnt)
+                fprintf(fgfx, "%llu %d %d Q %06x\n", (unsigned long long)cycles, line, hp, B->tb_board__DOT__u_board__DOT__rom_addr);
+            if (B->tb_board__DOT__u_board__DOT__rom_rv)
+                fprintf(fgfx, "%llu %d %d D %08x\n", (unsigned long long)cycles, line, hp, B->tb_board__DOT__u_board__DOT__rom_data);
+        }
         if (fmcu && r->tb_board__DOT__u_board__DOT__u_sys__DOT__mcu_wr && frame >= mt0 && frame < mt1)
             fprintf(fmcu, "%ld %d %d sfr %02x %02x int1 %d int0 %d\n", frame, line, hp, r->tb_board__DOT__u_board__DOT__u_sys__DOT__mcu_wa,
                     r->tb_board__DOT__u_board__DOT__u_sys__DOT__mcu_wd, r->tb_board__DOT__u_board__DOT__u_sys__DOT__int1, r->tb_board__DOT__u_board__DOT__u_sys__DOT__int0);
