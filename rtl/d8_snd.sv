@@ -36,17 +36,20 @@
 // (every 32). Pause holds every enable.
 
 module d8_snd #(
-    // mix gains in 1/256 (m3_findings 4.1, R20). FM and OPL: 1:1, as both
-    // boards sum two identical YM3014 DAC outputs through equal 10 kOhm
-    // resistors (Last Mission sch. sheet 27, Gondomania sheet 28); jt03 and
-    // jtopl both deliver the chip's 16-bit DAC word (14-bit operators into
-    // a saturating 16-bit accumulator), so equal gains give the board's
-    // balance. MAME weights the OPL 2x (1.25x on gondo) with no source.
-    // SSG: MAME's route (its level against the DACs is not settled).
+    // mix gains in 1/256 (R20, docs/r20_pcb_audio_check.md). Measured on a
+    // real SRD board (PCB capture of power-on and both demos, fitted
+    // against this core's chip outputs over 100 s): OPL:FM 1.65 (90%
+    // interval 1.60-1.77 before MAME-bias correction), SSG 3400-3900 for FM
+    // 102. The schematics' equal 10 kOhm summing resistors (Last Mission
+    // sheet 27, Gondomania sheet 28) do not give 1:1: the chips' DAC words
+    // differ in level. MAME: OPL 2x on lastmisn/srdarwin, 1.25x on gondo.
+    // Last Mission and Gondomania use the same chips into the same summing
+    // network as the measured board, so the SRD balance is applied to all
+    // three (Gondomania inferred, no recording checked yet).
     parameter int FM_GAIN   = 102,     // 0.40 (MAME's FM route)
-    parameter int SSG_GAIN  = 2775,    // 0.20 per channel on jt49's sum
-    parameter int OPL_GAIN  = 102,     // = FM_GAIN (schematics; MAME 0.80)
-    parameter int OPL_GAIN_GO = 102    // = FM_GAIN (schematics; MAME 0.50)
+    parameter int SSG_GAIN  = 3600,    // PCB fit (MAME 2775: 0.20 per channel on jt49's sum)
+    parameter int OPL_GAIN  = 170,     // PCB fit, 1.67 x FM (MAME 0.80 = 205)
+    parameter int OPL_GAIN_GO = 170    // as OPL_GAIN (MAME 0.50 = 128)
 ) (
     input  logic        clk,
     input  logic        rst_n,
@@ -65,7 +68,7 @@ module d8_snd #(
     output logic signed [15:0] o_fm,     // YM2203 FM
     output logic        [9:0]  o_ssg,    // YM2203 SSG, jt49 sum of the three channels
     output logic signed [15:0] o_opl,    // OPL
-    output logic signed [15:0] o_mix,    // MAME's routes, saturated
+    output logic signed [15:0] o_mix,    // the gains above, saturated
 
     output logic [15:0] o_dbg_unmapped,  // 6502 accesses to unmapped addresses
     output logic [15:0] o_dbg_rom_writes

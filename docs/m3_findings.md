@@ -270,6 +270,13 @@ die). R17 closed for the CPU; the timer item closed in favour of the core.
 
 ### 7.2 R20: FM to OPL balance set to the schematics (1:1)
 
+**Superseded 2026-10-04 (later the same day):** a PCB recording of SRD
+gives OPL:FM 1.65 and a louder SSG (docs/r20_pcb_audio_check.md). The
+equal summing resistors hold, but the chips' DAC words are not at the same
+level, so the schematics alone do not give the balance. Gains now FM 102,
+OPL 170, SSG 3600; d8_board AC-couples the mix (m4_findings). The reading
+below is kept as the record.
+
 Second reading of both mixing networks (LM-SCH sheet 27, PDF p. 31;
 GONDO-TSM sheet 28, PDF p. 46): YM2203 FM and YM3526 each drive their own
 YM3014 serial DAC (2H and 1H), each DAC through a 3403 op-amp buffer and

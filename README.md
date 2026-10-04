@@ -119,10 +119,17 @@ The main ones:
   MAME. An independent second audit confirmed both fixes and the
   unchanged arithmetic (docs/jt65c02_cycle_audit.md), and found the
   remaining differences listed under Known issues.
-- **Sound mix.** The music chip (YM3526 / YM3812) and the effects chip
-  (YM2203 FM) are mixed 1:1, as both board schematics wire them (equal
-  10 kOhm resistors after identical YM3014 DACs). MAME plays the music
-  chip at twice that level. See Known issues.
+- **Sound mix (R20).** Measured from a real SRD board: a PCB capture of
+  power-on and both demos, lined up with this core's chip outputs over
+  100 seconds. On the board the music chip (YM3526 / YM3812) plays at 1.65
+  times the effects chip (YM2203 FM); MAME uses 2 times. The core uses
+  1.67, and the YM2203's square-wave channels about 3 dB above MAME's
+  level, also from the recording. The schematics wire both chips in
+  through equal resistors, so the difference is in the chips' own output
+  levels. Last Mission and Gondomania use the same chips and the same
+  mixing circuit and get the same balance (not yet checked against their
+  own recordings). As on the boards, the output is AC coupled (no DC
+  offset). Details: docs/r20_pcb_audio_check.md.
 - **Mid-screen writes** (palette, tiles, scroll) are drawn as the beam
   meets them; MAME draws each frame at once.
 - **Gondomania's main CPU** runs at 3 MHz as in MAME. The board's schematic
@@ -140,11 +147,9 @@ The main ones:
 
 ## Known issues
 
-- **Music level (R20).** The 1:1 mix follows the schematics, which give
-  the wiring but not each chip's output level. On a MiSTer the music
-  sounds quiet against the effects. I am measuring the balance from
-  real-board recordings of SRD; the next update will set it from that
-  evidence.
+- **Gondomania and Last Mission mix.** Set from the SRD board recording
+  (same chips and mixing circuit); a direct recording of either board would
+  confirm it.
 - **Sound CPU cycle counts (R19, R21).** Three groups of instructions
   still differ from the data sheets by one cycle: indexed loads, stores
   and read-modify-write instructions across a page, a taken branch across

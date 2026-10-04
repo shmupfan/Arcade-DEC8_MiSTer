@@ -101,6 +101,13 @@ most 32, no late program byte (o_dbg_prom_late 0), no forced refresh.
   is released on the raster's power-on phase (line 248, pixel 0), so its
   first clock sees the state a reset release gives in M2. Every board run
   shows 7 vsyncs and 430,080 active pixels during the download, all black.
+- Audio (R20 update, 2026-10-04): the mix now uses the PCB-measured gains
+  (FM 102, OPL 170, SSG 3600), is AC coupled in d8_board (one-pole
+  high-pass, 7.5 Hz, as the boards' coupling capacitors: jt49's unsigned
+  SSG sum had put up to 10,757 of DC into the mix), and the per-machine
+  gains are 35/16 (Last Mission), 34/16 (Gondomania), 22/16 (SRD), loudest
+  sample about -0.4 dBFS on the M3 runs and the R20 srdarwinj run, no
+  clipping. The paragraph below is the first M4 setting.
 - Audio: d8_snd's mix times 38/16 (Last Mission), 40/16 (Gondomania),
   27/16 (SRD), then the OSD volume (Normal, +6, -6, -12 dB), saturated.
   From the M3 runs (mix channel, 1 s RMS median / peak sample): Last

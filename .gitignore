@@ -18,3 +18,4 @@ incremental_db/
 *.qws
 *.rpt
 *.summary
+sim/pcb_audio/

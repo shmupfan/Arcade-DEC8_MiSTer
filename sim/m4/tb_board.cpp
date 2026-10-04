@@ -19,9 +19,12 @@
 // Video while the core is held in reset (download, SDRAM init): vsync edges
 // and lit pixels are counted and printed (PRE-RUN line); the picture must be
 // black with sync running.
-// Audio: every clock, o_audio must equal d8_sys's mix three clocks earlier
-// times the machine's gain (38, 40, 27 / 16) at the default volume,
-// saturated (d8_board); mismatches, saturated clocks and the peak are
+// Audio: every clock, o_audio must equal a C++ model of d8_board's audio
+// path at the default volume: d8_sys's mix, registered, AC coupled (mix
+// minus its average, the average stepping by 1/1024 of the difference on
+// each 48 kHz tick, 16 fraction bits), times the machine's gain (35, 34,
+// 22 / 16), saturated. The model's average is also checked against the
+// RTL's every clock. Mismatches, saturated clocks and the peak are
 // printed with the counters.
 //
 // Plusargs: +stream=FILE +set=NAME +frames=N +cap=FILE +out=DIR +io=FILE
@@ -56,10 +59,14 @@ static long vs_edges[2], lit_px[2], de_px[2];
 static bool vs_prev = false;
 static long aud_bad = 0, aud_sat = 0;
 static int aud_peak = 0;
-static int mix_d[3] = {0, 0, 0};
 static bool aud_have = false;
-static int gain_of(int mach) { return mach == 1 ? 40 : mach == 2 ? 27 : 38; }
-static int cur_gain = 38;
+static int gain_of(int mach) { return mach == 1 ? 34 : mach == 2 ? 22 : 35; }
+static int cur_gain = 35;
+// model registers (d8_board audio) and the previous clock's RTL inputs
+static int32_t m_lp = 0;
+static int m_mixr = 0, m_mixq = 0, m_prod = 0;
+static int p_mix = 0, p_tick = 0, p_rst_n = 0;
+static long aud_lp_bad = 0;
 
 static void tick() {
     top->clk = 0; top->eval();
@@ -81,18 +88,27 @@ static void tick() {
         vs_edges[0] = de_px[0] = lit_px[0] = 0;
         vphase = 1;
     }
-    // audio: o_audio(t) = sat(mix(t-3) * gain / 16) at volume 0
+    // audio: the model's registers step on this clock edge from the
+    // previous clock's values (volume 0)
     int a = (int16_t)top->o_audio;
-    if (aud_have) {
-        int sum = (mix_d[2] * cur_gain) >> 4;      // arithmetic shift, as the RTL
+    {
+        int64_t d = ((int64_t)m_mixr << 16) - (int64_t)m_lp;
+        int32_t lp = !p_rst_n ? 0 : p_tick ? (int32_t)(m_lp + (int32_t)(d >> 10)) : m_lp;
+        int mixq = m_mixr - (m_lp >> 16);
+        int prod = m_mixq * cur_gain;
+        int sum = m_prod >> 4;                     // arithmetic shift, as the RTL
         int e = sum > 32767 ? 32767 : sum < -32768 ? -32768 : sum;
-        if (e != sum) aud_sat++;
-        if (a != e) aud_bad++;
+        if (aud_have) {
+            if (e != sum) aud_sat++;
+            if (a != e) aud_bad++;
+            if (lp != (int32_t)r->tb_board__DOT__u_board__DOT__dc_lp) aud_lp_bad++;
+        }
+        m_lp = lp; m_mixq = mixq; m_prod = prod; m_mixr = p_mix;
     }
     if ((a < 0 ? -a : a) > aud_peak) aud_peak = a < 0 ? -a : a;
-    mix_d[2] = mix_d[1];
-    mix_d[1] = mix_d[0];
-    mix_d[0] = (int16_t)r->tb_board__DOT__u_board__DOT__mix;
+    p_mix = (int16_t)r->tb_board__DOT__u_board__DOT__mix;
+    p_tick = r->tb_board__DOT__u_board__DOT__dc_tick;
+    p_rst_n = r->tb_board__DOT__u_board__DOT__core_rst_n;
     aud_have = true;
 }
 
@@ -523,9 +539,9 @@ int main(int argc, char **argv) {
     printf("DONE vblanks %ld cycles %llu overruns %d maxcyc %d verr %d promlate %d unmapped %d xacc %d sndunm %d\n", frame,
            (unsigned long long)cycles, top->o_dbg_overruns, top->o_dbg_maxcyc, top->o_dbg_verr,
            top->o_dbg_prom_late, top->o_dbg_unmapped, top->o_dbg_xacc, top->o_dbg_snd_unmapped);
-    printf("SDRAM cpu_maxlat %d sub_maxlat %d ref_forced %d; audio mismatches %ld saturated %ld peak %d; "
+    printf("SDRAM cpu_maxlat %d sub_maxlat %d ref_forced %d; audio mismatches %ld (dc average %ld) saturated %ld peak %d; "
            "running: vs_edges %ld lit_px %ld\n", top->o_dbg_cpu_maxlat, top->o_dbg_sub_maxlat, top->o_dbg_ref_forced,
-           aud_bad, aud_sat, aud_peak, vs_edges[1], lit_px[1]);
+           aud_bad, aud_lp_bad, aud_sat, aud_peak, vs_edges[1], lit_px[1]);
     if (fio) fclose(fio);
     if (fsnd) fclose(fsnd);
     if (fstr) fclose(fstr);

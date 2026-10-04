@@ -128,7 +128,7 @@ module d8_board #(
   end
 
   // ------------------------------------------------------------------ SDRAM
-  logic        core_rst_n;
+  logic        core_rst_n /* verilator public_flat_rd */;
   logic        core_run /* verilator public_flat_rd */;
   logic        sd_ready;
   logic        prom_req, prom_ok, srom_req, srom_ok;
@@ -188,32 +188,49 @@ module d8_board #(
     .o_dbg_prom_late(o_dbg_prom_late), .o_dbg_unmapped(o_dbg_unmapped), .o_dbg_xacc(o_dbg_xacc));
 
   // ------------------------------------------------------------------ audio
-  // d8_snd's mix (YM2203 FM + SSG + OPL, m3_findings) times a per-machine
-  // gain in 1/16 steps, then the OSD volume, saturated. The boards set the
-  // level with a volume pot after the amplifier, so absolute level is ours
-  // to choose. Reference: Final Star Force on the Tecmo 16 core, gameplay
-  // 1 s RMS median -16.4 dBFS. Measured on the M3 runs (mix channel, 1 s
-  // RMS median / peak sample): Last Mission attract -30.8 dBFS, play -28.2,
-  // peak 13,462; Gondomania attract -26.5, play -27.2, peak 12,176; SRD
-  // attract -21.1, play -23.3, peak 18,934. The gains bring each game's
-  // loudest measured sample to -0.6 to -0.2 dBFS, no clipping on any run:
-  //   Last Mission x2.375 (38/16): play median -20.7 dBFS, peak 31,972
-  //   Gondomania   x2.5   (40/16): play median -19.2 dBFS, peak 30,440
-  //   SRD          x1.6875 (27/16): play median -18.8 dBFS, peak 31,951
+  // d8_snd's mix (YM2203 FM + SSG + OPL at the PCB-measured balance, R20),
+  // AC coupled, times a per-machine gain in 1/16 steps, then the OSD
+  // volume, saturated.
+  // AC coupling: the boards couple every source into the amplifier through
+  // capacitors (4.7 uF after each YM3014 buffer, the SSG through its
+  // network; LM-SCH sheet 27, GONDO-TSM sheet 28), so the amplifier never
+  // sees DC. jt49's SSG sum is unsigned and puts up to 10,757 of DC into
+  // the mix; a one-pole high-pass (mix minus its average, updated at
+  // 48 kHz with a 1/1024 step: corner 7.5 Hz) removes it, as the
+  // capacitors do, and frees that headroom.
+  // Level: the boards set it with a volume pot (VR1) after the amplifier,
+  // so absolute level is ours to choose: each game's loudest sample on the
+  // M3 runs (and the R20 srdarwinj attract run) at about -0.4 dBFS, no
+  // clipping (1 s RMS medians, gameplay):
+  //   Last Mission x2.1875 (35/16): peak 30,666, play median -21.8 dBFS
+  //   Gondomania   x2.125  (34/16): peak 30,510, play median -16.5 dBFS
+  //   SRD          x1.375  (22/16): peak 30,344, play median -18.7 dBFS
+  // (Final Star Force on the Tecmo 16 core: -16.4 dBFS.)
   // Both multiplier operands signed (Dooyong landmine: one unsigned operand
   // makes the product unsigned).
   logic signed [6:0]  gain;
   logic signed [23:0] prod, amp;
   always_comb begin
     case (machine)
-      2'd1:    gain = 7'sd40;
-      2'd2:    gain = 7'sd27;
-      default: gain = 7'sd38;
+      2'd1:    gain = 7'sd34;
+      2'd2:    gain = 7'sd22;
+      default: gain = 7'sd35;
     endcase
   end
-  logic signed [15:0] mix_q;
-  always_ff @(posedge clk) begin                 // registered twice (timing)
-    mix_q <= mix;
+  logic [10:0]        dc_div;
+  logic               dc_tick /* verilator public_flat_rd */;
+  logic signed [31:0] dc_lp /* verilator public_flat_rd */;   // mix average, 16 fraction bits
+  logic signed [15:0] mix_r;
+  logic signed [16:0] mix_q /* verilator public_flat_rd */;   // AC-coupled mix
+  logic signed [33:0] dc_d;                      // 34 bits: the difference can exceed 2^31
+  assign dc_d = (34'(mix_r) <<< 16) - 34'(dc_lp);
+  always_ff @(posedge clk) begin                 // registered (timing)
+    dc_div  <= (dc_div == 11'd1999) ? 11'd0 : dc_div + 11'd1;   // 96 MHz / 2000 = 48 kHz
+    dc_tick <= (dc_div == 11'd0);
+    if (!core_rst_n)  dc_lp <= 32'sd0;
+    else if (dc_tick) dc_lp <= dc_lp + 32'(dc_d >>> 10);
+    mix_r <= mix;
+    mix_q <= 17'(mix_r) - 17'(dc_lp >>> 16);
     prod  <= mix_q * gain;
   end
   always_comb begin
