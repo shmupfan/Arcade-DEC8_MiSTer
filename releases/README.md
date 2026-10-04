@@ -13,10 +13,10 @@ and are copied to the same folders under
 
 | File | md5 | Notes |
 |------|-----|-------|
-| `Arcade-DEC8_20261004.rbf` | `70ef132767ae6777700205213261b2e2` | First release: Last Mission (four sets), Gondomania (three sets), SRD: Super Real Darwin (three sets). |
+| `Arcade-DEC8_20261004.rbf` | `aec0cd50e72098ca415cb349c6229628` | Last Mission (four sets), Gondomania (three sets), SRD: Super Real Darwin (three sets). Updated the same day: sound mix set from a real SRD board recording (music 1.67 times the effects, R20), output AC coupled as on the boards. First build of the day: `70ef132767ae6777700205213261b2e2`. |
 
 Every released RBF passed, in order: frame replay against MAME for every
 set (video pixel-exact), full-system boots against MAME from power-on, a
-sound comparison against MAME, a board-level simulation through the MRA
+sound comparison against MAME (the mix balance then set from PCB evidence where it differs), a board-level simulation through the MRA
 stream and the SDRAM model, a clean Quartus timing summary (every clock
 non-negative), and an md5-verified deploy.
